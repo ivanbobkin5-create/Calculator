@@ -1,0 +1,145 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and role information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "worker"] },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "companyId"]
+    },
+    "Company": {
+      "title": "Company",
+      "description": "Company information and settings",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["Мебельное производство", "Салон", "Дизайнер"] },
+        "city": { "type": "string" },
+        "ownerUid": { "type": "string" }
+      },
+      "required": ["name", "type", "city", "ownerUid"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Catalog product item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "purchasePrice": { "type": "number" },
+        "description": { "type": "string" },
+        "image": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "category", "price"]
+    },
+    "ProductionConfig": {
+      "title": "Production Config",
+      "description": "Settings for own production",
+      "type": "object",
+      "properties": {
+        "ldspBrands": { "type": "array" },
+        "edgeTypes": { "type": "object" },
+        "edgeThicknesses": { "type": "object" },
+        "drilling": { "type": "object" },
+        "facades": { "type": "object" },
+        "customFacades": { "type": "array" },
+        "address": { "type": "string" },
+        "photos": { "type": "array" }
+      }
+    },
+    "CategoriesConfig": {
+      "title": "Categories Config",
+      "description": "Product categories and coefficients",
+      "type": "object",
+      "properties": {
+        "categories": { "type": "array" },
+        "coefficients": { "type": "object" }
+      }
+    },
+    "GeneralConfig": {
+      "title": "General Config",
+      "description": "General company settings",
+      "type": "object",
+      "properties": {
+        "coefficients": { "type": "object" },
+        "calcMode": { "type": "string" },
+        "trimming": { "type": "number" },
+        "hardwareKitPrice": { "type": "number" },
+        "assemblyPercentage": { "type": "number" },
+        "deliveryTariffs": { "type": "object" },
+        "mapLink": { "type": "string" },
+        "productCategories": { "type": "array" }
+      }
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Saved calculation project",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "required": ["id", "name", "createdAt", "createdBy", "data"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Company employee record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string" },
+        "accessLevel": { "type": "string", "enum": ["admin", "manager", "worker"] }
+      },
+      "required": ["name", "email", "role", "accessLevel"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile"
+    },
+    "/companies/{companyId}": {
+      "schema": "Company",
+      "description": "Company data"
+    },
+    "/companies/{companyId}/products/{productId}": {
+      "schema": "Product",
+      "description": "Company product catalog"
+    },
+    "/companies/{companyId}/settings/production": {
+      "schema": "ProductionConfig",
+      "description": "Production settings"
+    },
+    "/companies/{companyId}/settings/categories": {
+      "schema": "CategoriesConfig",
+      "description": "Categories and coefficients"
+    },
+    "/companies/{companyId}/settings/general": {
+      "schema": "GeneralConfig",
+      "description": "General settings"
+    },
+    "/companies/{companyId}/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Saved projects"
+    },
+    "/companies/{companyId}/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Company employees"
+    }
+  }
+}

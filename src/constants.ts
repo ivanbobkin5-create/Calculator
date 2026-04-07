@@ -405,6 +405,34 @@ export const LDSP_DATABASE = {
     "Grey Matt",
     "Anthracite Matt"
   ],
+  "Evosoft": [
+    "6001 White",
+    "6002 Black",
+    "6003 Grey",
+    "6004 Cream",
+    "6005 Anthracite"
+  ],
+  "AGT SUPRAMATT": [
+    "3001 White Supramatt",
+    "3002 Black Supramatt",
+    "3003 Grey Supramatt",
+    "3004 Cream Supramatt",
+    "3005 Anthracite Supramatt"
+  ],
+  "AGT SUPRAMATT PUR": [
+    "PUR 3001 White",
+    "PUR 3002 Black",
+    "PUR 3003 Grey",
+    "PUR 3004 Cream",
+    "PUR 3005 Anthracite"
+  ],
+  "EVOSOFT PUR": [
+    "PUR 6001 White",
+    "PUR 6002 Black",
+    "PUR 6003 Grey",
+    "PUR 6004 Cream",
+    "PUR 6005 Anthracite"
+  ],
   "ХДФ": [
     "Холодный серый",
     "Орех Экко",
@@ -484,3 +512,74 @@ export const NORDECO_EDGE_MAPPING: Record<string, { rehau?: string; galoplast?: 
 };
 
 export type Brand = keyof typeof LDSP_DATABASE;
+
+export const SERVICES_LIST = [
+  { id: 's1', name: 'Прямолинейный распил ЛДСП столешницы глубиной 600 мм', unit: 'м.п.' },
+  { id: 's2', name: 'Прямолинейный распил ЛДСП столешницы глубиной 900 мм', unit: 'м.п.' },
+  { id: 's3', name: 'Прямолинейный распил стеновой панели 600 мм', unit: 'м.п.' },
+  { id: 's4', name: 'Кромление ABC кромкой', unit: 'м.п.' },
+  { id: 's5', name: 'Склейка/скрутка двух плит (указывается площадь готовой детали)', unit: 'м2' },
+  { id: 's6', name: 'Сборка нижнего модуля при производстве (без навески фасадов)', unit: 'шт' },
+  { id: 's7', name: 'Сборка нижнего модуля с ящиками при производстве (без навески фасадов)', unit: 'шт' },
+  { id: 's8', name: 'Сборка верхнего модуля при производстве (без навески фасадов)', unit: 'шт' },
+  { id: 's9', name: 'Сборка ящика для шкафа при производстве (без навески фасадов)', unit: 'шт' },
+  { id: 's10', name: 'Распил GOLA профиля, прямой рез', unit: 'шт' },
+  { id: 's11', name: 'Распил GOLA профиля, рез под углом 45 градусов', unit: 'шт' },
+  { id: 's12', name: 'Вклейка врезного профиля подсветки в деталь', unit: 'м.п.' },
+  { id: 's13', name: 'Наклейка зеркала на деталь/фасад', unit: 'м2' },
+];
+
+export const PRICE_LIST_CATEGORIES = [
+  {
+    title: "Материалы",
+    brands: ["Egger", "Kronospan", "Lamarty", "Nordeco", "Evosoft", "AGT SUPRAMATT", "ХДФ"]
+  },
+  {
+    title: "Фасады заказные",
+    brands: ["Пленка", "Эмаль", "AGT SUPRAMATT PUR", "EVOSOFT PUR"]
+  },
+  {
+    title: "Услуги производства",
+    brands: ["Услуги"]
+  },
+  {
+    title: "Столешницы и стеновые",
+    brands: []
+  },
+  {
+    title: "Крепежные элементы и цоколь",
+    brands: []
+  },
+  {
+    title: "Ручки и крючки",
+    brands: []
+  },
+  {
+    title: "Мойки и аксессуары",
+    brands: []
+  },
+  {
+    title: "Петли",
+    brands: []
+  },
+  {
+    title: "Системы выдвижения",
+    brands: []
+  },
+  {
+    title: "Выдвижные корзины",
+    brands: []
+  },
+  {
+    title: "Подъемные механизмы",
+    brands: []
+  },
+  {
+    title: "Освещение",
+    brands: []
+  },
+  {
+    title: "Оснащение шкафов",
+    brands: []
+  }
+];

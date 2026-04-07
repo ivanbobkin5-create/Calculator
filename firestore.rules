@@ -1,0 +1,177 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: /users/{userId}
+// Fields:
+//   - uid: string (required) - Firebase Auth UID
+//   - email: string (required) - User email
+//   - displayName: string (optional) - User display name
+//   - role: string (required, enum: ['admin', 'manager', 'worker']) - User role
+//   - companyId: string (required) - ID of the company the user belongs to
+//   - createdAt: string (required) - ISO 8601 timestamp
+//
+// Collection: /companies/{companyId}
+// Fields:
+//   - name: string (required) - Company name
+//   - type: string (required, enum: ['Мебельное производство', 'Салон', 'Дизайнер']) - Company type
+//   - city: string (required) - Company city
+//   - ownerUid: string (required) - UID of the company owner
+//
+// Collection: /companies/{companyId}/products/{productId}
+// Fields:
+//   - id: number (required) - Product ID
+//   - name: string (required) - Product name
+//   - category: string (required) - Product category
+//   - price: number (required) - Final price
+//   - purchasePrice: number (optional) - Purchase price
+//   - description: string (optional) - Product description
+//   - image: string (optional) - Product image URL
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : null;
+    }
+
+    function isAdmin() {
+      let data = getUserData();
+      return isAuthenticated() &&
+        ((data != null && data.role == 'admin') ||
+          request.auth.token.email == "lk.ivanbobkin@gmail.com");
+    }
+
+    function isManager() {
+      let data = getUserData();
+      return isAuthenticated() && (isAdmin() || (data != null && data.role == 'manager'));
+    }
+
+    function isWorker() {
+      let data = getUserData();
+      return isAuthenticated() && (isManager() || (data != null && data.role == 'worker'));
+    }
+
+    function belongsToCompany(companyId) {
+      let data = getUserData();
+      return isAuthenticated() && (isAdmin() || (data != null && data.companyId == companyId));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'companyId']) &&
+             data.uid is string &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'manager', 'worker'] &&
+             data.companyId is string && data.companyId.size() > 0;
+    }
+
+    function isValidCompany(data) {
+      return data.keys().hasAll(['name', 'type', 'city', 'ownerUid']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.type in ['Мебельное производство', 'Салон', 'Дизайнер'] &&
+             data.city is string && data.city.size() > 0 &&
+             data.ownerUid == request.auth.uid;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'price']) &&
+             data.id is number &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.category is string && data.category.size() > 0 &&
+             data.price is number && data.price >= 0 &&
+             (!('purchasePrice' in data) || (data.purchasePrice is number && data.purchasePrice >= 0)) &&
+             (!('image' in data) || isValidUrl(data.image));
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['id', 'name', 'createdAt', 'createdBy', 'data']) &&
+             data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.createdAt is string &&
+             data.data is map;
+    }
+
+    function isValidEmployee(data) {
+      return data.keys().hasAll(['name', 'email', 'role', 'accessLevel']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role is string && data.role.size() > 0 &&
+             data.accessLevel in ['admin', 'manager', 'worker'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == userId && request.resource.data.role == 'admin') || 
+                    (isAdmin() && isValidUser(request.resource.data) && request.resource.data.uid == userId);
+      allow update: if (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == userId && 
+                       (request.resource.data.role == resource.data.role || isAdmin())) ||
+                    (isAdmin() && isValidUser(request.resource.data) && request.resource.data.uid == userId);
+      allow delete: if isAdmin();
+    }
+
+    match /companies/{companyId} {
+      allow read: if belongsToCompany(companyId);
+      allow create: if isAuthenticated() && isValidCompany(request.resource.data);
+      allow update: if isAdmin() && belongsToCompany(companyId) && isValidCompany(request.resource.data);
+
+      match /products/{productId} {
+        allow read: if belongsToCompany(companyId);
+        allow create, update: if isManager() && belongsToCompany(companyId) && isValidProduct(request.resource.data);
+        allow delete: if isManager() && belongsToCompany(companyId);
+      }
+
+      match /settings/{settingId} {
+        allow read: if belongsToCompany(companyId);
+        allow write: if isManager() && belongsToCompany(companyId);
+      }
+
+      match /projects/{projectId} {
+        allow read: if belongsToCompany(companyId);
+        allow create: if isWorker() && belongsToCompany(companyId) && isValidProject(request.resource.data) && 
+                      request.resource.data.createdBy == request.auth.uid;
+        allow update: if isWorker() && belongsToCompany(companyId) && isValidProject(request.resource.data) && 
+                      request.resource.data.createdBy == resource.data.createdBy &&
+                      (request.auth.uid == resource.data.createdBy || isAdmin());
+        allow delete: if isManager() && belongsToCompany(companyId);
+      }
+
+      match /employees/{employeeId} {
+        allow read: if belongsToCompany(companyId);
+        allow create, update: if isAdmin() && belongsToCompany(companyId) && isValidEmployee(request.resource.data);
+        allow delete: if isAdmin() && belongsToCompany(companyId);
+      }
+    }
+  }
+}
