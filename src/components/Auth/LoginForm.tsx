@@ -21,7 +21,10 @@ export const LoginForm = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (data.email && data.password) {
-      onLogin(data);
+      onLogin({
+        email: data.email.trim().toLowerCase(),
+        password: data.password
+      });
     }
   };
 

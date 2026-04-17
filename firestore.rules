@@ -51,26 +51,37 @@ service cloud.firestore {
       return exists(path) ? get(path).data : null;
     }
 
+    function isAppAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "ivanbobkin5@gmail.com" || request.auth.token.email == "lk.ivanbobkin@gmail.com");
+    }
+
     function isAdmin() {
       let data = getUserData();
       return isAuthenticated() &&
-        ((data != null && data.role == 'admin') ||
-          request.auth.token.email == "lk.ivanbobkin@gmail.com");
+        (isAppAdmin() || (data != null && 'role' in data && data.role == 'admin'));
     }
 
     function isManager() {
       let data = getUserData();
-      return isAuthenticated() && (isAdmin() || (data != null && data.role == 'manager'));
+      return isAuthenticated() && (isAdmin() || (data != null && 'role' in data && data.role == 'manager'));
     }
 
     function isWorker() {
       let data = getUserData();
-      return isAuthenticated() && (isManager() || (data != null && data.role == 'worker'));
+      return isAuthenticated() && (isManager() || (data != null && 'role' in data && data.role == 'worker'));
     }
 
     function belongsToCompany(companyId) {
       let data = getUserData();
-      return isAuthenticated() && (isAdmin() || (data != null && data.companyId == companyId));
+      return isAuthenticated() && (isAppAdmin() || (data != null && 'companyId' in data && data.companyId == companyId));
+    }
+
+    function isNotBlocked(companyId) {
+      return isAppAdmin() || (
+        (getUserData() == null || !('isBlocked' in getUserData()) || getUserData().isBlocked != true) && 
+        (!exists(/databases/$(database)/documents/companies/$(companyId)) || !('isBlocked' in get(/databases/$(database)/documents/companies/$(companyId)).data) || get(/databases/$(database)/documents/companies/$(companyId)).data.isBlocked != true)
+      );
     }
 
     function isValidEmail(email) {
@@ -90,7 +101,8 @@ service cloud.firestore {
              data.uid is string &&
              isValidEmail(data.email) &&
              data.role in ['admin', 'manager', 'worker'] &&
-             data.companyId is string && data.companyId.size() > 0;
+             data.companyId is string && data.companyId.size() > 0 &&
+             (!('isBlocked' in data) || data.isBlocked is bool);
     }
 
     function isValidCompany(data) {
@@ -98,17 +110,23 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.type in ['Мебельное производство', 'Салон', 'Дизайнер'] &&
              data.city is string && data.city.size() > 0 &&
-             data.ownerUid == request.auth.uid;
+             data.ownerUid is string &&
+             (!('isBlocked' in data) || data.isBlocked is bool) &&
+             (!('employeeLimit' in data) || data.employeeLimit is number) &&
+             (!('productLimit' in data) || data.productLimit is number) &&
+             (!('manufacturerId' in data) || data.manufacturerId is string) &&
+             (!('tariffExpiration' in data) || data.tariffExpiration is string);
     }
 
     function isValidProduct(data) {
       return data.keys().hasAll(['id', 'name', 'category', 'price']) &&
-             data.id is number &&
+             (data.id is number || data.id is string) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
              data.category is string && data.category.size() > 0 &&
              data.price is number && data.price >= 0 &&
              (!('purchasePrice' in data) || (data.purchasePrice is number && data.purchasePrice >= 0)) &&
-             (!('image' in data) || isValidUrl(data.image));
+             (!('description' in data) || data.description is string) &&
+             (!('image' in data) || data.image is string);
     }
 
     function isValidProject(data) {
@@ -116,7 +134,13 @@ service cloud.firestore {
              data.id is string &&
              data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
              data.createdAt is string &&
-             data.data is map;
+             data.data is map &&
+             (!('status' in data) || data.status in ['draft', 'sent', 'transferred']) &&
+             (!('sketches' in data) || data.sketches is list) &&
+             (!('specification' in data) || data.specification is map) &&
+             (!('sourceCompanyId' in data) || data.sourceCompanyId is string) &&
+             (!('sourceProjectId' in data) || data.sourceProjectId is string) &&
+             (!('transferredAt' in data) || data.transferredAt is string);
     }
 
     function isValidEmployee(data) {
@@ -131,46 +155,58 @@ service cloud.firestore {
     // Rules
     // ===============================================================
 
+    match /tariffRequests/{requestId} {
+      allow read: if isAppAdmin() || (isAuthenticated() && (resource == null || resource.data.companyId == getUserData().companyId));
+      allow create: if isAuthenticated() && request.resource.data.companyId == getUserData().companyId;
+      allow update, delete: if isAppAdmin();
+    }
+
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
+      allow read: if isOwner(userId) || isAppAdmin() || (isAuthenticated() && getUserData() != null && resource.data.companyId == getUserData().companyId);
       allow create: if (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == userId && request.resource.data.role == 'admin') || 
-                    (isAdmin() && isValidUser(request.resource.data) && request.resource.data.uid == userId);
+                    (isAdmin() && isValidUser(request.resource.data) && request.resource.data.uid == userId) ||
+                    isAppAdmin();
       allow update: if (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == userId && 
                        (request.resource.data.role == resource.data.role || isAdmin())) ||
-                    (isAdmin() && isValidUser(request.resource.data) && request.resource.data.uid == userId);
-      allow delete: if isAdmin();
+                    (isAdmin() && isValidUser(request.resource.data) && request.resource.data.uid == userId) ||
+                    isAppAdmin();
+      allow delete: if isAppAdmin();
     }
 
     match /companies/{companyId} {
-      allow read: if belongsToCompany(companyId);
+      allow get: if isAuthenticated();
+      allow list: if isAuthenticated();
       allow create: if isAuthenticated() && isValidCompany(request.resource.data);
-      allow update: if isAdmin() && belongsToCompany(companyId) && isValidCompany(request.resource.data);
+      allow update: if (isAdmin() && belongsToCompany(companyId) && isValidCompany(request.resource.data)) || isAppAdmin();
+      allow delete: if isAppAdmin();
 
       match /products/{productId} {
-        allow read: if belongsToCompany(companyId);
-        allow create, update: if isManager() && belongsToCompany(companyId) && isValidProduct(request.resource.data);
-        allow delete: if isManager() && belongsToCompany(companyId);
+        allow read: if belongsToCompany(companyId) || isAppAdmin() ||
+                     (isAuthenticated() && get(/databases/$(database)/documents/companies/$(getUserData().companyId)).data.manufacturerId == companyId);
+        allow create, update: if isManager() && belongsToCompany(companyId) && isNotBlocked(companyId) && isValidProduct(request.resource.data);
+        allow delete: if isManager() && belongsToCompany(companyId) && isNotBlocked(companyId);
       }
 
       match /settings/{settingId} {
-        allow read: if belongsToCompany(companyId);
-        allow write: if isManager() && belongsToCompany(companyId);
+        allow read: if belongsToCompany(companyId) || isAppAdmin() || 
+                     (isAuthenticated() && (settingId == 'general' || settingId == 'categories' || 
+                      (settingId == 'production' && getUserData() != null && get(/databases/$(database)/documents/companies/$(getUserData().companyId)).data.manufacturerId == companyId)));
+        allow write: if isManager() && belongsToCompany(companyId) && isNotBlocked(companyId);
       }
 
       match /projects/{projectId} {
-        allow read: if belongsToCompany(companyId);
-        allow create: if isWorker() && belongsToCompany(companyId) && isValidProject(request.resource.data) && 
-                      request.resource.data.createdBy == request.auth.uid;
-        allow update: if isWorker() && belongsToCompany(companyId) && isValidProject(request.resource.data) && 
-                      request.resource.data.createdBy == resource.data.createdBy &&
-                      (request.auth.uid == resource.data.createdBy || isAdmin());
-        allow delete: if isManager() && belongsToCompany(companyId);
+        allow read: if belongsToCompany(companyId) || isAppAdmin();
+        allow create: if (isWorker() && belongsToCompany(companyId) && isNotBlocked(companyId) && isValidProject(request.resource.data)) ||
+                      (isAuthenticated() && isValidProject(request.resource.data) && request.resource.data.status == 'transferred');
+        allow update: if (isWorker() && belongsToCompany(companyId) && isNotBlocked(companyId) && isValidProject(request.resource.data)) ||
+                      isAppAdmin();
+        allow delete: if (belongsToCompany(companyId) && isNotBlocked(companyId) && (isManager() || resource.data.createdBy == request.auth.uid)) || isAppAdmin();
       }
 
       match /employees/{employeeId} {
-        allow read: if belongsToCompany(companyId);
-        allow create, update: if isAdmin() && belongsToCompany(companyId) && isValidEmployee(request.resource.data);
-        allow delete: if isAdmin() && belongsToCompany(companyId);
+        allow read: if belongsToCompany(companyId) || isAppAdmin();
+        allow create, update: if (isAdmin() && belongsToCompany(companyId) && isNotBlocked(companyId) && isValidEmployee(request.resource.data)) || isAppAdmin();
+        allow delete: if (isAdmin() && belongsToCompany(companyId) && isNotBlocked(companyId)) || isAppAdmin();
       }
     }
   }

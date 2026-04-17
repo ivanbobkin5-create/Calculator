@@ -1,0 +1,53 @@
+269:              </div>
+270:            </div>
+277:          </div>
+286:                      <div className="font-medium text-blue-900">Заявка от {new Date(req.createdAt).toLocaleDateString()}</div>
+288:                    </div>
+295:                    </div>
+296:                  </div>
+298:              </div>
+299:            </div>
+301:        </div>
+309:            </div>
+323:        </div>
+334:              </div>
+343:                  </div>
+352:                </div>
+353:              </div>
+360:                  </div>
+370:                </div>
+371:              </div>
+378:                  </div>
+387:                </div>
+388:              </div>
+395:                  </div>
+406:                </div>
+407:              </div>
+428:              </div>
+433:            </div>
+434:          </div>
+456:                      </div>
+458:                        <div className="text-sm font-medium text-gray-900">{employee.name}</div>
+459:                        <div className="text-sm text-gray-500">{employee.email}</div>
+460:                      </div>
+461:                    </div>
+464:                    <div className="text-sm text-gray-900">{employee.role}</div>
+514:            </div>
+516:        </div>
+517:      </div>
+528:            </div>
+542:              </div>
+572:                </div>
+573:              </div>
+589:                    </div>
+599:                    </div>
+609:                    </div>
+624:                    </div>
+634:                    </div>
+648:                  </div>
+650:              </div>
+662:              </div>
+663:            </div>
+664:          </div>
+665:        </div>
+667:    </div>

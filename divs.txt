@@ -1,0 +1,54 @@
+246:    <div className="p-4 md:p-8">
+247:      <div className="max-w-5xl mx-auto space-y-8">
+249:        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200">
+250:          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+251:            <div>
+253:              <div className="flex items-center gap-2 text-gray-600">
+280:            <div className="mt-6 pt-6 border-t border-gray-100">
+282:              <div className="space-y-3">
+284:                  <div key={req.id} className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+285:                    <div className="flex justify-between items-start mb-2">
+286:                      <div className="font-medium text-blue-900">Заявка от {new Date(req.createdAt).toLocaleDateString()}</div>
+289:                    <div className="text-sm text-blue-800 space-y-1">
+304:        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200">
+305:          <div className="flex items-center justify-between mb-8">
+306:            <div className="flex items-center gap-3">
+326:          <div className="mb-8 p-6 bg-gray-50 rounded-2xl border border-gray-200">
+332:              <div className="mb-4 p-4 bg-red-50 border border-red-100 text-red-700 rounded-xl text-sm">
+338:              <div>
+340:                <div className="relative">
+341:                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+355:              <div>
+357:                <div className="relative">
+358:                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+373:              <div>
+375:                <div className="relative">
+376:                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+390:              <div>
+392:                <div className="relative">
+393:                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+409:              <div className="md:col-span-2 flex justify-end gap-3 mt-2">
+430:            <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-100 text-sm text-blue-700">
+437:        <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+451:                    <div className="flex items-center">
+452:                      <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+457:                      <div className="ml-4">
+458:                        <div className="text-sm font-medium text-gray-900">{employee.name}</div>
+459:                        <div className="text-sm text-gray-500">{employee.email}</div>
+464:                    <div className="text-sm text-gray-900">{employee.role}</div>
+512:            <div className="p-8 text-center text-gray-500">
+521:        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+522:          <div className="bg-white rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-xl">
+523:            <div className="flex justify-between items-center mb-6">
+530:            <div className="space-y-6">
+531:              <div>
+544:              <div>
+546:                <div className="grid grid-cols-2 gap-3">
+575:              <div className="space-y-4">
+580:                    <div className="flex items-center justify-between">
+590:                    <div className="flex items-center justify-between">
+600:                    <div className="flex items-center justify-between">
+615:                    <div className="flex items-center justify-between">
+625:                    <div className="flex items-center justify-between">
+639:                  <div className="flex items-center justify-between">
+652:              <div className="pt-6 border-t border-gray-100">

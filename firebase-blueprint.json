@@ -10,7 +10,8 @@
         "displayName": { "type": "string" },
         "role": { "type": "string", "enum": ["admin", "manager", "worker"] },
         "companyId": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isBlocked": { "type": "boolean", "description": "Whether the user is blocked" }
       },
       "required": ["uid", "email", "role", "companyId"]
     },
@@ -22,7 +23,11 @@
         "name": { "type": "string" },
         "type": { "type": "string", "enum": ["Мебельное производство", "Салон", "Дизайнер"] },
         "city": { "type": "string" },
-        "ownerUid": { "type": "string" }
+        "ownerUid": { "type": "string" },
+        "isBlocked": { "type": "boolean", "description": "Whether the company is blocked" },
+        "employeeLimit": { "type": "number", "description": "Max number of employees" },
+        "productLimit": { "type": "number", "description": "Max number of products" },
+        "manufacturerId": { "type": "string", "description": "ID of the production company this salon/designer works with" }
       },
       "required": ["name", "type", "city", "ownerUid"]
     },
@@ -91,7 +96,13 @@
         "createdAt": { "type": "string", "format": "date-time" },
         "createdBy": { "type": "string" },
         "createdByName": { "type": "string" },
-        "data": { "type": "object" }
+        "data": { "type": "object" },
+        "status": { "type": "string", "enum": ["draft", "sent", "transferred"] },
+        "sketches": { "type": "array", "items": { "type": "string" } },
+        "specification": { "type": "object" },
+        "sourceCompanyId": { "type": "string" },
+        "sourceProjectId": { "type": "string" },
+        "transferredAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "createdAt", "createdBy", "data"]
     },

@@ -1,0 +1,10 @@
+  currentProjectId,
+  currentProjectId: string | null;
+    if (currentProjectId && currentProjectName) {
+          {currentProjectId && (
+                {currentProjectId ? 'Обновить проект' : 'Сохранить проект'}
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+      const projectId = currentProjectId || Date.now().toString();
+      if (!currentProjectId) {
+            currentProjectId={currentProjectId}
+            currentProjectId={currentProjectId}
