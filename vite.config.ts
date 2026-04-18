@@ -19,8 +19,8 @@ export default defineConfig(({mode}) => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
         },
         manifest: {
-          name: 'MebeCalc',
-          short_name: 'MebeCalc',
+          name: 'Зовите мебельщиков: Мебельный калькулятор',
+          short_name: 'Зовите мебельщиков',
           description: 'Приложение для расчета стоимости корпусной мебели',
           theme_color: '#ffffff',
           background_color: '#ffffff',

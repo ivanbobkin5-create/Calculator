@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /*?* # Запрещаем индексировать страницы с техническими параметрами и сессиями
+
+# Адрес карты сайта (sitemap)
+Sitemap: https://zovitemebelschikov.ru/sitemap.xml
