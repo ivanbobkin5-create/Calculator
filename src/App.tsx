@@ -36,7 +36,8 @@ import {
   Star,
   Link,
   BarChart3,
-  WifiOff
+  WifiOff,
+  Image as ImageIcon
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -2686,9 +2687,7 @@ const SettingsView = ({
                 { id: 'edge', label: 'Кромка', sub: 'На метраж' },
                 { id: 'facadeSheet', label: 'Фасады плитные', sub: 'На листы' },
                 { id: 'facadeCustom', label: 'Фасады заказные', sub: 'На м²' },
-                { id: 'hardware', label: 'Фурнитура', sub: 'На комплектующие' },
-                { id: 'assembly', label: 'Сборка', sub: 'На услуги' },
-                { id: 'delivery', label: 'Доставка', sub: 'На услуги' }
+                { id: 'hardware', label: 'Фурнитура', sub: 'На комплектующие' }
               ].map(item => (
                 <div key={item.id} className="p-4 bg-gray-50 rounded-xl">
                   <div className="flex items-center justify-between mb-3">
@@ -3058,8 +3057,6 @@ const SettingsView = ({
                       { id: 'facadeSheet', label: 'Фасад (плита)', baseId: 'facadeSheet' },
                       { id: 'facadeCustom', label: 'Фасад (заказной)', baseId: 'facadeCustom' },
                       { id: 'hardware', label: 'Фурнитура', baseId: 'hardware' },
-                      { id: 'assembly', label: 'Сборка', baseId: 'assembly' },
-                      { id: 'delivery', label: 'Доставка', baseId: 'delivery' },
                       { id: 'hardwareKit', label: 'Комплект метизов (₽)', isPrice: true },
                       { id: 'assemblyPercentage', label: 'Процент сборки (%)', isRate: true },
                       { id: 'deliveryBase', label: 'Доставка (база ₽)', isPrice: true },
@@ -3216,10 +3213,10 @@ const SettingsView = ({
 
 
 const SAMPLE_PRODUCTS = [
-  { id: 1, name: "Петля Sensys 8645i", category: "Петли", price: 250, description: "Петля со встроенным демпфером Silent System", image: "https://picsum.photos/seed/hinge/400/300" },
-  { id: 2, name: "Ручка-скоба 128мм", category: "Ручки и крючки", price: 450, description: "Матовый черный металл, современный стиль", image: "https://picsum.photos/seed/handle/400/300" },
-  { id: 3, name: "Тандембокс Antaro", category: "Системы выдвижения", price: 3500, description: "Система выдвижения с доводчиком, высота M", image: "https://picsum.photos/seed/drawer/400/300" },
-  { id: 4, name: "Мойка GranFest Quarz", category: "Мойки и аксессуары", price: 8900, description: "Кварцевая мойка, цвет Песок", image: "https://picsum.photos/seed/sink/400/300" },
+  { id: 1, name: "Петля Sensys 8645i", category: "Петли", price: 250, description: "Петля со встроенным демпфером Silent System", image: "" },
+  { id: 2, name: "Ручка-скоба 128мм", category: "Ручки и крючки", price: 450, description: "Матовый черный металл, современный стиль", image: "" },
+  { id: 3, name: "Тандембокс Antaro", category: "Системы выдвижения", price: 3500, description: "Система выдвижения с доводчиком, высота M", image: "" },
+  { id: 4, name: "Мойка GranFest Quarz", category: "Мойки и аксессуары", price: 8900, description: "Кварцевая мойка, цвет Песок", image: "" },
 ];
 
 const ServicesView = ({ 
@@ -3738,7 +3735,7 @@ const ProductsView = ({
       price: finalPrice,
       purchasePrice: newProduct.purchasePrice,
       description: 'Пользовательский товар',
-      image: newProduct.image || `https://picsum.photos/seed/${Date.now()}/400/300`
+      image: newProduct.image || ""
     };
     onSaveProduct(product);
     setNewProduct({ name: '', category: productCategories[0], purchasePrice: 0, image: '' });
@@ -3902,9 +3899,9 @@ const ProductsView = ({
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                   />
                 ) : (
-                  <div className="flex flex-col items-center justify-center text-gray-300">
-                    <Package className="w-12 h-12 mb-2" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Фото отсутствует</span>
+                  <div className="flex flex-col items-center justify-center text-gray-400 w-full h-full bg-gray-50 border-b border-gray-100">
+                    <ImageIcon className="w-16 h-16 text-gray-300 mb-3" strokeWidth={1.5} />
+                    <span className="text-[13px] font-medium text-gray-400">Изображение отсутствует</span>
                   </div>
                 )}
                 <div className="absolute top-3 left-3 flex flex-col gap-2">
@@ -4036,12 +4033,8 @@ export default function App() {
     photos: []
   });
 
-  // Set showAdminPanel to true when isAppAdmin becomes true
-  useEffect(() => {
-    if (isAppAdmin) {
-      setShowAdminPanel(true);
-    }
-  }, [isAppAdmin]);
+  // Removed the auto-redirect to admin panel
+  // Users will access it manually using the button in the bottom left menu
 
   // Firebase Auth Listener
   useEffect(() => {
@@ -4540,10 +4533,14 @@ export default function App() {
         projectData.createdAt = new Date().toISOString();
       }
 
-      await setDoc(doc(db, 'companies', companyData.id, 'projects', projectId), projectData, { merge: true });
+      // Не ждем ответа от сервера (await), чтобы оффлайн сохранение работало мгновенно
+      setDoc(doc(db, 'companies', companyData.id, 'projects', projectId), projectData, { merge: true }).catch(error => {
+        console.error("Ошибка фонового сохранения проекта:", error);
+      });
+      
       setCurrentProjectId(projectId);
       setCurrentProjectName(projectName);
-      showAlert('Успех', 'Проект успешно сохранен');
+      showAlert('Успех', !navigator.onLine ? 'Проект сохранен (оффлайн режим). Данные синхронизируются при появлении сети.' : 'Проект успешно сохранен');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `companies/${companyData.id}/projects`);
     }
@@ -5097,7 +5094,8 @@ export default function App() {
             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-200">
               <Calculator className="text-white w-6 h-6" />
             </div>
-            <span className="text-xl font-black text-gray-900 tracking-tight">MebCalc <span className="text-blue-600">Pro</span></span>
+            <span className="text-xl font-black text-gray-900 tracking-tight hidden sm:inline">Мебельный <span className="text-blue-600">калькулятор</span></span>
+            <span className="text-xl font-black text-gray-900 tracking-tight sm:hidden">Калькулятор</span>
           </div>
           
           {authMode === 'login' ? (
@@ -5247,19 +5245,27 @@ export default function App() {
       )}
 
       <div className="flex min-h-screen bg-gray-50">
+      
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-gray-900/20 z-40 lg:hidden transition-opacity"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside className={cn(
         "fixed inset-y-0 left-0 z-50 bg-white border-r border-gray-200 transition-all duration-300 shadow-xl lg:shadow-none",
-        isSidebarOpen ? "w-64" : "w-20",
-        !isSidebarOpen && "lg:w-20"
+        isSidebarOpen ? "w-64" : "w-14 lg:w-20"
       )}>
         <div className="flex flex-col h-full">
-          <div className="p-6 flex items-center justify-between min-w-0">
+          <div className="p-4 flex items-center justify-between min-w-0 flex-shrink-0 border-b border-gray-100">
             {isSidebarOpen && (
               <div className="flex flex-col min-w-0">
-                <span className="font-bold text-xl text-blue-600 truncate">Калькулятор</span>
+                <span className="font-bold text-lg text-blue-600 truncate leading-tight">Калькулятор</span>
                 {companyData?.name && (
-                  <span className="text-[10px] text-gray-400 truncate font-medium uppercase tracking-wider">
+                  <span className="text-[9px] text-gray-400 truncate font-semibold uppercase tracking-wider">
                     {companyData.name}
                   </span>
                 )}
@@ -5267,83 +5273,85 @@ export default function App() {
             )}
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors ml-auto"
+              className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors ml-auto text-gray-400"
             >
-              {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5 text-gray-600" />}
             </button>
           </div>
 
-          <nav className="flex-1 px-4 space-y-2">
+          <nav className="flex-1 px-3 py-3 space-y-1">
+            <button 
+              onClick={() => setActiveTab('projects')}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                activeTab === 'projects' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+              )}
+            >
+              <FolderOpen className="w-5 h-5 flex-shrink-0" />
+              {isSidebarOpen && <span className="text-sm font-medium">Проекты</span>}
+            </button>
             <button 
               onClick={() => setActiveTab('calculator')}
               className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                activeTab === 'calculator' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                activeTab === 'calculator' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
               )}
             >
-              <Calculator className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Калькулятор</span>}
+              <Calculator className="w-5 h-5 flex-shrink-0" />
+              {isSidebarOpen && <span className="text-sm font-medium">Калькулятор</span>}
             </button>
             <button 
               onClick={() => setActiveTab('summary')}
               className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                activeTab === 'summary' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                activeTab === 'summary' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
               )}
             >
-              <LayoutDashboard className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Итоговый расчет</span>}
-            </button>
-            <button 
-              onClick={() => setActiveTab('projects')}
-              className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                activeTab === 'projects' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
-              )}
-            >
-              <FolderOpen className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Проекты</span>}
+              <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
+              {isSidebarOpen && <span className="text-sm font-medium">Итоговый расчет</span>}
             </button>
             <button 
               onClick={() => setActiveTab('products')}
               className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                activeTab === 'products' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                activeTab === 'products' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
               )}
             >
-              <ShoppingBag className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Товары</span>}
+              <ShoppingBag className="w-5 h-5 flex-shrink-0" />
+              {isSidebarOpen && <span className="text-sm font-medium">Товары</span>}
             </button>
             <button 
               onClick={() => setActiveTab('services')}
               className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                activeTab === 'services' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                activeTab === 'services' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
               )}
             >
-              <Database className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Услуги</span>}
+              <Database className="w-5 h-5 flex-shrink-0" />
+              {isSidebarOpen && <span className="text-sm font-medium">Услуги</span>}
             </button>
             <button 
               onClick={() => setActiveTab('service-section')}
               className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                activeTab === 'service-section' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                activeTab === 'service-section' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
               )}
             >
-              <Truck className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Сервис</span>}
+              <Truck className="w-5 h-5 flex-shrink-0" />
+              {isSidebarOpen && <span className="text-sm font-medium">Сервис</span>}
             </button>
           </nav>
-          <div className="p-4 border-t border-gray-100 space-y-2">
+          
+          {/* BOTTOM PROFILE & ADMIN SECTION */}
+          <div className="px-3 pb-3 pt-2 bg-gray-50/50 space-y-1">
             {isSidebarOpen && (
               <div className="mb-2">
                 <div className="flex flex-col px-3 gap-0.5">
-                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Профиль</span>
-                  <span className="text-sm font-black text-gray-900 truncate">
-                    {userData?.displayName || 'Пользователь'}
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none mb-0.5">Профиль</span>
+                  <span className="text-[13px] font-bold text-gray-900 truncate leading-tight">
+                    {userData?.displayName || userData?.name || 'Пользователь'}
                   </span>
-                  <span className="text-[10px] text-gray-500 font-medium truncate uppercase tracking-tighter">
+                  <span className="text-[9px] text-gray-500 font-medium truncate uppercase tracking-tighter">
                     {userRole === 'admin' ? 'Администратор' : 'Сотрудник'} {companyData?.type === 'Салон' ? 'салона' : (companyData?.type === 'Дизайнер' ? 'дизайнера' : '')}
                   </span>
                 </div>
@@ -5354,32 +5362,32 @@ export default function App() {
                 <button 
                   onClick={() => setActiveTab('price')}
                   className={cn(
-                    "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                    activeTab === 'price' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                    activeTab === 'price' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
                   )}
                 >
-                  <Tag className="w-6 h-6 flex-shrink-0" />
-                  {isSidebarOpen && <span className="font-medium">Прайс-лист</span>}
+                  <Tag className="w-[18px] h-[18px] flex-shrink-0" />
+                  {isSidebarOpen && <span className="text-[13px] font-medium">Прайс-лист</span>}
                 </button>
                 <button 
                   onClick={() => setActiveTab('settings')}
                   className={cn(
-                    "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                    activeTab === 'settings' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                    activeTab === 'settings' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
                   )}
                 >
-                  <Settings className="w-6 h-6 flex-shrink-0" />
-                  {isSidebarOpen && <span className="font-medium">Настройки</span>}
+                  <Settings className="w-[18px] h-[18px] flex-shrink-0" />
+                  {isSidebarOpen && <span className="text-[13px] font-medium">Настройки</span>}
                 </button>
                 <button 
                   onClick={() => setActiveTab('production')}
                   className={cn(
-                    "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                    activeTab === 'production' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                    activeTab === 'production' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
                   )}
                 >
-                  <Factory className="w-6 h-6 flex-shrink-0" />
-                  {isSidebarOpen && <span className="font-medium">Производство</span>}
+                  <Factory className="w-[18px] h-[18px] flex-shrink-0" />
+                  {isSidebarOpen && <span className="text-[13px] font-medium">Производство</span>}
                 </button>
               </>
             )}
@@ -5387,29 +5395,29 @@ export default function App() {
               <button 
                 onClick={() => setActiveTab('employees')}
                 className={cn(
-                  "w-full flex items-center gap-4 p-3 rounded-xl transition-all",
-                  activeTab === 'employees' ? "bg-blue-600 text-white shadow-lg shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
+                  "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                  activeTab === 'employees' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-600 hover:bg-gray-100"
                 )}
               >
-                <Users className="w-6 h-6 flex-shrink-0" />
-                {isSidebarOpen && <span className="font-medium">Сотрудники</span>}
+                <Users className="w-[18px] h-[18px] flex-shrink-0" />
+                {isSidebarOpen && <span className="text-[13px] font-medium">Сотрудники</span>}
               </button>
             )}
             {isAppAdmin && (
               <button 
                 onClick={() => setShowAdminPanel(true)}
-                className="w-full flex items-center gap-4 p-3 rounded-xl text-blue-600 hover:bg-blue-50 transition-all border border-blue-100"
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-blue-600 hover:bg-blue-50 transition-all border border-blue-100"
               >
-                <ShieldCheck className="w-6 h-6 flex-shrink-0" />
-                {isSidebarOpen && <span className="font-bold">Админ-панель</span>}
+                <ShieldCheck className="w-[18px] h-[18px] flex-shrink-0" />
+                {isSidebarOpen && <span className="text-[13px] font-bold">Админ-панель</span>}
               </button>
             )}
             <button 
               onClick={handleLogout}
-              className="w-full flex items-center gap-4 p-3 rounded-xl text-red-600 hover:bg-red-50 transition-all"
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-red-600 hover:bg-red-50 transition-all"
             >
-              <LogOut className="w-6 h-6 flex-shrink-0" />
-              {isSidebarOpen && <span className="font-medium">Выйти</span>}
+              <LogOut className="w-[18px] h-[18px] flex-shrink-0" />
+              {isSidebarOpen && <span className="text-[13px] font-medium">Выйти</span>}
             </button>
           </div>
         </div>
@@ -5417,8 +5425,8 @@ export default function App() {
 
       {/* Main Content */}
       <main className={cn(
-        "flex-1 transition-all duration-300",
-        isSidebarOpen ? "lg:ml-64" : "lg:ml-20"
+        "flex-1 transition-all duration-300 min-w-0",
+        isSidebarOpen ? "ml-14 lg:ml-64" : "ml-14 lg:ml-20"
       )}>
         {activeTab === 'calculator' ? (
           <CalculatorView 

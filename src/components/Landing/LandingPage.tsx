@@ -22,7 +22,8 @@ export const LandingPage = ({ onLogin, onRegister }: { onLogin: () => void, onRe
               <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-200">
                 <Calculator className="text-white w-6 h-6" />
               </div>
-              <span className="text-xl font-black text-gray-900 tracking-tight">MebCalc <span className="text-blue-600">Pro</span></span>
+              <span className="text-xl font-black text-gray-900 tracking-tight hidden sm:inline">Мебельный <span className="text-blue-600">калькулятор</span></span>
+              <span className="text-xl font-black text-gray-900 tracking-tight sm:hidden">Калькулятор</span>
             </div>
             <div className="flex items-center gap-4">
               <button 
@@ -128,7 +129,6 @@ export const LandingPage = ({ onLogin, onRegister }: { onLogin: () => void, onRe
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {/* Производство */}
             <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 hover:shadow-xl transition-all flex flex-col relative">
-              <div className="absolute top-0 right-0 bg-blue-600 text-white px-4 py-1 rounded-bl-xl rounded-tr-3xl text-xs font-bold uppercase tracking-wider">Популярный</div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Производство</h3>
               <div className="mb-6">
                 <span className="text-4xl font-black text-gray-900">4 990 ₽</span>
@@ -155,7 +155,7 @@ export const LandingPage = ({ onLogin, onRegister }: { onLogin: () => void, onRe
                   <span className="text-gray-600">+1 дизайнер - 1000 рублей</span>
                 </div>
               </div>
-              <button onClick={onRegister} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">
+              <button onClick={onRegister} className="w-full py-3 bg-gray-100 text-gray-900 font-bold rounded-xl hover:bg-gray-200 transition-colors">
                 Начать бесплатно
               </button>
             </div>
@@ -260,7 +260,7 @@ export const LandingPage = ({ onLogin, onRegister }: { onLogin: () => void, onRe
               <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-white/10 rounded-full blur-3xl"></div>
               <div className="relative z-10">
                 <h3 className="text-3xl font-bold mb-6">Готовы оптимизировать свой бизнес?</h3>
-                <p className="text-blue-100 mb-8 text-lg">Присоединяйтесь к сотням профессионалов, которые уже используют MebCalc Pro для роста своего дела.</p>
+                <p className="text-blue-100 mb-8 text-lg">Присоединяйтесь к сотням профессионалов, которые уже используют Мебельный Калькулятор для роста своего бизнеса.</p>
                 <button 
                   onClick={onRegister}
                   className="px-8 py-4 bg-white text-blue-600 font-black rounded-2xl hover:bg-blue-50 transition-all shadow-lg"
@@ -280,9 +280,10 @@ export const LandingPage = ({ onLogin, onRegister }: { onLogin: () => void, onRe
             <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
               <Calculator className="text-white w-5 h-5" />
             </div>
-            <span className="text-lg font-black text-gray-900 tracking-tight">MebCalc <span className="text-blue-600">Pro</span></span>
+            <span className="text-lg font-black text-gray-900 tracking-tight hidden sm:inline">Мебельный <span className="text-blue-600">калькулятор</span></span>
+            <span className="text-lg font-black text-gray-900 tracking-tight sm:hidden">Калькулятор</span>
           </div>
-          <p className="text-gray-400 text-sm">© 2026 MebCalc Pro. Все права защищены.</p>
+          <p className="text-gray-400 text-sm">© 2026 Мебельный калькулятор. Все права защищены.</p>
         </div>
       </footer>
     </div>
