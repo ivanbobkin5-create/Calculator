@@ -53,23 +53,28 @@ export const ProjectSpecificationView = ({
     setSelectedSketch(null);
   };
 
-  const handleSendProject = async () => {
+  const handleSendProject = () => {
     setIsSubmitting(true);
     setError(null);
-    try {
-      await updateDoc(doc(db, 'companies', companyId, 'projects', project.id), {
-        status: 'sent',
-        sketches: sketches,
-        specification: project.data, // In a real app, this would be a refined spec
-        sentAt: serverTimestamp()
-      });
-      onClose();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `companies/${companyId}/projects/${project.id}`);
-      setError('Ошибка при отправке проекта');
-    } finally {
-      setIsSubmitting(false);
+    
+    const updateData: any = {
+      status: 'sent',
+      sketches: sketches,
+      sentAt: serverTimestamp()
+    };
+    if (project.data) {
+      updateData.specification = project.data;
     }
+
+    // Не ждем ответа (await), чтобы мгновенно сработал UI даже при слабой сети
+    updateDoc(doc(db, 'companies', companyId, 'projects', project.id), updateData)
+      .catch((err) => {
+        console.error('Ошибка фонового обновления:', err);
+      });
+      
+    // Немедленно закрываем окно, слушатель onSnapshot обновит UI
+    onClose();
+    setIsSubmitting(false);
   };
 
   const handleTransferToProduction = async () => {

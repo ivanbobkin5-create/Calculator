@@ -37,7 +37,9 @@ import {
   Link,
   BarChart3,
   WifiOff,
-  Image as ImageIcon
+  ImageIcon,
+  Info,
+  PlayCircle
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -1208,6 +1210,29 @@ const CalculatorView = ({
           )}
         </div>
         
+        {!results && (
+          <div className="mb-8 p-5 bg-blue-50/50 border border-blue-100 rounded-2xl flex items-start gap-4">
+            <Info className="w-6 h-6 text-blue-500 shrink-0 mt-0.5" />
+            <div className="text-sm text-blue-900 space-y-3">
+              <p>
+                <strong>Важно для работы с проектом:</strong> В вашем проекте (Pro100) названия деталей должны соответствовать материалу. «ЛДСП» — ЛДСП или ДСП, все фасады должны иметь имя «Фасад». Все детали из ДВП или ХДФ должны иметь название «ДВП» или «ХДФ».
+              </p>
+              <p>
+                В каждой детали должна присутствовать <strong>отчетность</strong>, чтобы она фигурировала в списке деталей проекта.
+              </p>
+              <p>
+                Материалы (цвета/декоры) в проекте могут быть любыми (например, «Белый»), но в калькуляторе вы можете выбрать любой цвет из базы. Просто важно помнить, что в вашем проекте «Белый» — это, например, «Супер Белый» в расчете для клиента. Если у вас несколько видов материала с разным цветом, то в проекте они должны иметь разный цвет.
+              </p>
+              <p className="pt-1">
+                <a href="#" className="inline-flex items-center font-bold text-blue-700 hover:text-blue-800 underline underline-offset-4 transition-colors">
+                  <PlayCircle className="w-4 h-4 mr-1.5" />
+                  Смотреть обучающее видео по подготовке проекта
+                </a>
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Загрузить файл отчета из Pro100 (CSV)</label>
@@ -3219,6 +3244,68 @@ const SAMPLE_PRODUCTS = [
   { id: 4, name: "Мойка GranFest Quarz", category: "Мойки и аксессуары", price: 8900, description: "Кварцевая мойка, цвет Песок", image: "" },
 ];
 
+const ServiceItem = ({ service, defaultPrice, onAdd }: { service: any, defaultPrice: number, onAdd: (service: any, qty: number, price: number) => void }) => {
+  const [qty, setQty] = useState(1);
+  const [customPrice, setCustomPrice] = useState<string | number>(defaultPrice > 0 ? defaultPrice : '');
+
+  const currentPrice = typeof customPrice === 'number' ? customPrice : (parseFloat(customPrice) || 0);
+
+  return (
+    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex-1">
+        <h3 className="font-bold text-gray-800">{service.name}</h3>
+        <div className="flex items-center gap-3 mt-2">
+          <span className="text-sm text-gray-500">Ед. изм: {service.unit}</span>
+          <div className="flex items-center gap-2">
+            <input 
+              type="number"
+              placeholder="Цена"
+              value={customPrice}
+              onChange={(e) => setCustomPrice(e.target.value)}
+              className="w-24 px-3 py-1 border border-gray-200 rounded-lg text-sm font-bold text-blue-600 focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            <span className="text-sm font-bold text-gray-500">₽</span>
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex items-center gap-4">
+        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+          <button 
+            onClick={() => setQty(Math.max(1, qty - 1))}
+            className="p-2 hover:bg-gray-200 text-gray-600 transition-colors"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+          <input 
+            type="number" 
+            value={qty}
+            onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-16 text-center bg-transparent font-bold text-gray-800 outline-none"
+          />
+          <button 
+            onClick={() => setQty(qty + 1)}
+            className="p-2 hover:bg-gray-200 text-gray-600 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+        <button 
+          onClick={() => onAdd({ ...service, price: currentPrice }, qty, currentPrice)}
+          disabled={currentPrice <= 0}
+          className={cn(
+            "px-6 py-2 rounded-xl font-bold transition-all flex items-center gap-2",
+            currentPrice > 0 ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+          )}
+        >
+          <Plus className="w-4 h-4" />
+          Добавить
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const ServicesView = ({ 
   onAddService, 
   prices,
@@ -3234,12 +3321,6 @@ const ServicesView = ({
   const [customDeliverySupplier, setCustomDeliverySupplier] = useState('');
   const [customDeliveryPrice, setCustomDeliveryPrice] = useState(0);
   const [newService, setNewService] = useState({ name: '', unit: 'шт', price: 0 });
-
-  const handleAdd = (service: any) => {
-    const qty = quantities[service.id] || 1;
-    onAddService(service, qty);
-    setQuantities(prev => ({ ...prev, [service.id]: 1 }));
-  };
 
   const handleAddCustomDelivery = () => {
     onAddService({
@@ -3270,11 +3351,11 @@ const ServicesView = ({
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-800">Услуги производства</h2>
-        <p className="text-sm text-gray-500">Выберите необходимые услуги для выполнения проекта</p>
+        <p className="text-sm text-gray-500">Выберите необходимые услуги (цену можно скорректировать перед добавлением)</p>
       </div>
 
       <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm mb-8">
-        <h3 className="font-bold text-gray-800 mb-4">Добавить свою услугу в каталог</h3>
+        <h3 className="font-bold text-gray-800 mb-4">Создать новую услугу</h3>
         <div className="flex flex-col md:flex-row gap-4">
           <input 
             type="text" 
@@ -3313,55 +3394,18 @@ const ServicesView = ({
       <div className="grid grid-cols-1 gap-4">
         {catalogServices.length === 0 ? (
           <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-            Каталог услуг пуст. Добавьте свои услуги выше.
+            Каталог пуст
           </div>
         ) : (
           catalogServices.map(service => {
-            const price = service.price !== undefined ? service.price : (prices[service.name] || 0);
+            const defaultPrice = service.price !== undefined ? service.price : (prices[service.name] || 0);
             return (
-              <div key={service.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex-1">
-                  <h3 className="font-bold text-gray-800">{service.name}</h3>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-sm text-gray-500">Ед. изм: {service.unit}</span>
-                    <span className="text-sm font-bold text-blue-600">{price > 0 ? `${(price ?? 0).toLocaleString()} ₽` : 'Цена не указана'}</span>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-                    <button 
-                      onClick={() => setQuantities(prev => ({ ...prev, [service.id]: Math.max(1, (prev[service.id] || 1) - 1) }))}
-                      className="p-2 hover:bg-gray-200 text-gray-600 transition-colors"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <input 
-                      type="number" 
-                      value={quantities[service.id] || 1}
-                      onChange={(e) => setQuantities(prev => ({ ...prev, [service.id]: parseInt(e.target.value) || 1 }))}
-                      className="w-16 text-center bg-transparent font-bold text-gray-800 outline-none"
-                    />
-                    <button 
-                      onClick={() => setQuantities(prev => ({ ...prev, [service.id]: (prev[service.id] || 1) + 1 }))}
-                      className="p-2 hover:bg-gray-200 text-gray-600 transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <button 
-                    onClick={() => handleAdd(service)}
-                    disabled={price === 0}
-                    className={cn(
-                      "px-6 py-2 rounded-xl font-bold transition-all flex items-center gap-2",
-                      price > 0 ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md" : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                    )}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Добавить
-                  </button>
-                </div>
-              </div>
+              <ServiceItem 
+                key={service.id} 
+                service={service} 
+                defaultPrice={defaultPrice} 
+                onAdd={onAddService} 
+              />
             );
           })
         )}
@@ -4794,6 +4838,94 @@ export default function App() {
     );
   }, [facadeSearchQuery]);
 
+  const handleNewProject = () => {
+    localStorage.removeItem('mebcalc_draft');
+    setCurrentProjectId(null);
+    setCurrentProjectName('Новый проект');
+    setResults(null);
+    setSelectedDecor({});
+    setPrices({});
+    setFacadeType({});
+    setFacadeCustomType({});
+    setFacadeCategory({});
+    setFacadeMilling({});
+    setFacadeThicknessOverride({});
+    setSheetConfigs({});
+    setTrimming({ top: 15, bottom: 15, left: 15, right: 15 });
+    setKerf(4);
+    setRotations({});
+    setCuttingType('saw');
+    setEdgeToEdge(true);
+    setEdgePrices({});
+    setEdgeThickness({});
+    setEdgeDecor({});
+    setAddedProducts([]);
+    setAddedServices([]);
+    setServiceData({
+      address: { street: '', house: '', apartment: '', floor: '', elevator: 'none' },
+      delivery: false,
+      assembly: false,
+      distance: 0,
+      extraLoader: false
+    });
+    showAlert('Новый проект', 'Вы начали новый проект');
+  };
+
+  // Initialize draft from localStorage
+  useEffect(() => {
+    const savedDraft = localStorage.getItem('mebcalc_draft');
+    if (savedDraft) {
+      try {
+        const d = JSON.parse(savedDraft);
+        if (d.results) setResults(d.results);
+        if (d.selectedDecor) setSelectedDecor(d.selectedDecor);
+        if (d.prices) setPrices(d.prices);
+        if (d.facadeType) setFacadeType(d.facadeType);
+        if (d.sheetConfigs) setSheetConfigs(d.sheetConfigs);
+        if (d.trimming !== undefined) setTrimming(d.trimming);
+        if (d.kerf !== undefined) setKerf(d.kerf);
+        if (d.rotations) setRotations(d.rotations);
+        if (d.cuttingType) setCuttingType(d.cuttingType);
+        if (d.calcMode) setCalcMode(d.calcMode);
+        if (d.edgeToEdge) setEdgeToEdge(d.edgeToEdge);
+        if (d.edgePrices) setEdgePrices(d.edgePrices);
+        if (d.edgeThickness) setEdgeThickness(d.edgeThickness);
+        if (d.edgeDecor) setEdgeDecor(d.edgeDecor);
+        if (d.facadeCustomType) setFacadeCustomType(d.facadeCustomType);
+        if (d.facadeCategory) setFacadeCategory(d.facadeCategory);
+        if (d.facadeMilling) setFacadeMilling(d.facadeMilling);
+        if (d.facadeThicknessOverride) setFacadeThicknessOverride(d.facadeThicknessOverride);
+        if (d.addedProducts) setAddedProducts(d.addedProducts);
+        if (d.addedServices) setAddedServices(d.addedServices);
+        if (d.serviceData) setServiceData(d.serviceData);
+        if (d.currentProjectId) setCurrentProjectId(d.currentProjectId);
+        if (d.currentProjectName) setCurrentProjectName(d.currentProjectName);
+      } catch (e) {
+        console.error('Failed to parse draft calculation', e);
+      }
+    }
+  }, []);
+
+  // Save draft anytime important params change
+  useEffect(() => {
+    if (results || addedProducts.length > 0 || addedServices.length > 0) {
+      const draftState = {
+        results, selectedDecor, prices, facadeType, sheetConfigs,
+        trimming, kerf, rotations, cuttingType, calcMode, edgeToEdge,
+        edgePrices, edgeThickness, edgeDecor, facadeCustomType, facadeCategory,
+        facadeMilling, facadeThicknessOverride, addedProducts, addedServices, serviceData,
+        currentProjectId, currentProjectName
+      };
+      localStorage.setItem('mebcalc_draft', JSON.stringify(draftState));
+    }
+  }, [
+    results, selectedDecor, prices, facadeType, sheetConfigs,
+    trimming, kerf, rotations, cuttingType, calcMode, edgeToEdge,
+    edgePrices, edgeThickness, edgeDecor, facadeCustomType, facadeCategory,
+    facadeMilling, facadeThicknessOverride, addedProducts, addedServices, serviceData,
+    currentProjectId, currentProjectName
+  ]);
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -5471,14 +5603,7 @@ export default function App() {
             onSaveProject={saveProject}
             currentProjectId={currentProjectId}
             currentProjectName={currentProjectName}
-            onNewProject={() => {
-              setCurrentProjectId(null);
-              setCurrentProjectName(null);
-              setResults(null);
-              setAddedProducts([]);
-              setAddedServices([]);
-              showAlert('Новый проект', 'Вы начали новый проект');
-            }}
+            onNewProject={handleNewProject}
             showPrompt={showPrompt}
             productionFormat={productionFormat}
             productionSettings={productionSettings}
@@ -5704,14 +5829,7 @@ export default function App() {
             onSaveProject={saveProject}
             currentProjectId={currentProjectId}
             currentProjectName={currentProjectName}
-            onNewProject={() => {
-              setCurrentProjectId(null);
-              setCurrentProjectName(null);
-              setResults(null);
-              setAddedProducts([]);
-              setAddedServices([]);
-              showAlert('Новый проект', 'Вы начали новый проект');
-            }}
+            onNewProject={handleNewProject}
             showPrompt={showPrompt}
             productionFormat={productionFormat}
             productionSettings={productionSettings}

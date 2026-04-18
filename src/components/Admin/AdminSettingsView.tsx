@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Plus, Shield, Mail, User, Briefcase, Settings, Trash2, Edit2, X, Check, Loader2, Lock } from 'lucide-react';
+import { Users, Plus, Shield, Mail, User, Briefcase, Settings, Trash2, Edit2, X, Check, Loader2, Lock, Crown } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { db } from '../../firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, getDoc, query, where } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../../firebase-applet-config.json';
+
 
 // Initialize a secondary Firebase app to manage employee accounts without logging out the admin
 const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
@@ -240,6 +241,32 @@ export const AdminSettingsView = ({
     setNewEmployee(emp);
     setEditingId(emp.id);
     setIsAdding(true);
+  };
+
+  const makeProjectManager = (employee: Employee) => {
+    if (!companyId) return;
+    showConfirm('Назначить руководителя', `Сотрудник ${employee.name} получит должность 'Руководитель проекта' и полный доступ к системе (как администратор). Продолжить?`, async () => {
+      try {
+        await setDoc(doc(db, 'users', employee.id), {
+          uid: employee.id,
+          name: employee.name,
+          email: employee.email,
+          role: 'admin',
+          companyId: companyId,
+          createdAt: employee.createdAt || new Date().toISOString()
+        });
+
+        await setDoc(doc(db, 'companies', companyId, 'employees', employee.id), {
+          ...employee,
+          role: 'Руководитель проекта',
+          accessLevel: 'admin'
+        });
+        showAlert('Успешно', `Сотрудник ${employee.name} назначен руководителем проекта.`);
+      } catch (error: any) {
+        console.error("Error making project manager:", error);
+        showAlert('Ошибка', 'Не удалось назначить руководителя: ' + error.message);
+      }
+    });
   };
 
   return (
@@ -489,6 +516,15 @@ export const AdminSettingsView = ({
                     >
                       <Shield className="w-4 h-4" />
                     </button>
+                    {employee.accessLevel !== 'admin' && (
+                      <button 
+                        onClick={() => makeProjectManager(employee)}
+                        className="text-purple-600 hover:text-purple-900 mr-4"
+                        title="Назначить руководителем проекта (Полный доступ)"
+                      >
+                        <Crown className="w-4 h-4" />
+                      </button>
+                    )}
                     <button 
                       onClick={() => startEdit(employee)}
                       className="text-blue-600 hover:text-blue-900 mr-4"
