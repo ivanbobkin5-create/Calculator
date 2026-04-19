@@ -406,11 +406,21 @@ export const LDSP_DATABASE = {
     "Anthracite Matt"
   ],
   "Evosoft": [
-    "6001 White",
-    "6002 Black",
-    "6003 Grey",
-    "6004 Cream",
-    "6005 Anthracite"
+    "Сапфир индиго EVS015",
+    "Аквамарин EVS010",
+    "Розовый кварц EVS013",
+    "Холодный Жемчуг EVS008",
+    "Стальной Графит EVS005",
+    "Сумрачный Нефрит EVS011",
+    "Серебряный Сплав EVS006",
+    "Белое Олово EVS012",
+    "Горный Хрусталь EVS004",
+    "Пепельный Аметист EVS003",
+    "Черная Яшма EVS014",
+    "Дымчатый Агат EVS009",
+    "Белый Фарфоровый Оникс EVS001",
+    "Лунный Топаз EVS007",
+    "Серый Базальт EVS002"
   ],
   "AGT SUPRAMATT": [
     "3001 White Supramatt",
@@ -512,6 +522,21 @@ export const NORDECO_EDGE_MAPPING: Record<string, { rehau?: string; galoplast?: 
 };
 
 export type Brand = keyof typeof LDSP_DATABASE;
+
+export const LDSP_TO_EDGE_BRANDS: Record<string, string[]> = {
+  "Egger": ["Egger"],
+  "Kronospan": ["Rehau", "Galoplast"],
+  "Lamarty": ["Rehau", "Galoplast"],
+  "Nordeco": ["Rehau", "Galoplast", "Kantenwelt", "Egger"],
+  "AGT": ["Rehau", "Galoplast"],
+  "Evogloss": ["Rehau", "Galoplast"],
+  "Arkopa": ["Rehau", "Galoplast"],
+  "Evosoft": ["Rehau", "Galoplast", "Evosoft"],
+  "AGT SUPRAMATT": ["Rehau", "Galoplast"],
+  "AGT SUPRAMATT PUR": ["Rehau", "Galoplast"],
+  "EVOSOFT PUR": ["Rehau", "Galoplast"],
+  "ХДФ": ["Rehau", "Galoplast"]
+};
 
 export const SERVICES_LIST = [
   { id: 's1', name: 'Прямолинейный распил ЛДСП столешницы глубиной 600 мм', unit: 'м.п.' },

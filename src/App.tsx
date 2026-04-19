@@ -1,4 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import * as ReactDOM from 'react-dom';
+import { formatPhoneNumber } from './lib/utils';
+
+// @ts-ignore
+if (!(ReactDOM as any).findDOMNode) {
+  // @ts-ignore
+  (ReactDOM as any).findDOMNode = (component: any) => component;
+}
+
 import Papa from 'papaparse';
 import { RegistrationForm, RegistrationData } from './components/Auth/RegistrationForm';
 import { LoginForm } from './components/Auth/LoginForm';
@@ -26,6 +35,7 @@ import {
   MapPin,
   CheckCircle2,
   Trash2,
+  Edit2,
   Minus,
   Factory,
   Users,
@@ -39,7 +49,17 @@ import {
   WifiOff,
   ImageIcon,
   Info,
-  PlayCircle
+  PlayCircle,
+  Eye,
+  Image as ImageIconIcon,
+  Upload,
+  Palette,
+  Combine,
+  RotateCcw,
+  Globe,
+  Send,
+  ClipboardList,
+  UserX
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -59,9 +79,10 @@ import {
   getDocFromServer,
   deleteDoc
 } from 'firebase/firestore';
-import { LDSP_DATABASE, NORDECO_EDGE_MAPPING, PRICE_LIST_CATEGORIES, SERVICES_LIST } from './constants';
+import { LDSP_DATABASE, NORDECO_EDGE_MAPPING, LDSP_TO_EDGE_BRANDS, PRICE_LIST_CATEGORIES, SERVICES_LIST } from './constants';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { FURNITURE_CHECKLISTS, FurnitureType } from './checklistData';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -142,7 +163,12 @@ const ProductionView = ({
   productCategories,
   allCompanies,
   manufacturerCoefficients,
-  setShowManufacturerCoeffs
+  setShowManufacturerCoeffs,
+  isGluingMode,
+  setIsGluingMode,
+  selectedForGlue,
+  setSelectedForGlue,
+  sheetConfigs
 }: {
   productionFormat: ProductionFormat;
   setProductionFormat: React.Dispatch<React.SetStateAction<ProductionFormat>>;
@@ -158,6 +184,11 @@ const ProductionView = ({
   allCompanies: any[];
   manufacturerCoefficients: any;
   setShowManufacturerCoeffs: (show: boolean) => void;
+  isGluingMode: boolean;
+  setIsGluingMode: (val: boolean) => void;
+  selectedForGlue: string[];
+  setSelectedForGlue: React.Dispatch<React.SetStateAction<string[]>>;
+  sheetConfigs: Record<string, any>;
 }) => {
   const [manufacturerSettings, setManufacturerSettings] = React.useState<any>(null);
 
@@ -352,13 +383,20 @@ const ProductionView = ({
                             </tr>
                           </thead>
                           <tbody>
-                            {ownProductionConfig.ldspBrands.filter(b => b.brand).map((brand) => (
-                              <tr key={brand.id} className="border-t border-blue-50">
-                                <td className="py-2 px-2 font-bold text-gray-700">{brand.brand}</td>
+            {ownProductionConfig.ldspBrands.filter(b => b.brand && b.brand !== 'ХДФ' && b.brand !== 'ДВП').flatMap((brand) => {
+                              const edgeBrands = LDSP_TO_EDGE_BRANDS[brand.brand] || [];
+                              if (edgeBrands.length === 0) return [{ brand, edgeBrand: null }];
+                              return edgeBrands.map(eb => ({ brand, edgeBrand: eb }));
+                            }).map(({ brand, edgeBrand }) => (
+                              <tr key={`${brand.id}-${edgeBrand || 'none'}`} className="border-t border-blue-50">
+                                <td className="py-2 px-2 font-bold text-gray-700">
+                                  {brand.brand}
+                                  {edgeBrand && <div className="text-[10px] font-normal text-gray-400 uppercase tracking-tighter">{edgeBrand}</div>}
+                                </td>
                                 {['0.4', '0.8', '1.0', '2.0']
                                   .filter(t => ownProductionConfig.edgeThicknesses[t])
                                   .map(t => {
-                                    const mKey = `${brand.brand}:${t}`;
+                                    const mKey = edgeBrand ? `${brand.brand}:${edgeBrand}:${t}` : `${brand.brand}:${t}`;
                                     return (
                                       <td key={t} className="py-2 px-2">
                                         <input 
@@ -728,6 +766,9 @@ interface DeliveryTariffs {
   extraKmPrice: number;
   extraVolumePrice: number;
   extraLoaderPrice: number;
+  loadingBase: number;
+  floorPrice: number;
+  elevatorPrice: number;
 }
 
 const LDSP_BRANDS = [
@@ -736,6 +777,7 @@ const LDSP_BRANDS = [
   { name: 'Lamarty (2750x1830)', width: 2750, height: 1830 },
   { name: 'Nordeco (2800x2070)', width: 2800, height: 2070 },
   { name: 'Uvadrev (2440x1830)', width: 2440, height: 1830 },
+  { name: 'Evosoft (2800x1220)', width: 2800, height: 1220 },
 ];
 
 const FACADE_BRANDS: Record<string, SheetConfig> = {
@@ -945,7 +987,7 @@ const PriceView = ({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input 
               type="text" 
-              placeholder="Поиск декора..." 
+              placeholder="Поиск ..." 
               value={priceSearch}
               onChange={(e) => setPriceSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
@@ -1047,14 +1089,20 @@ const PriceView = ({
                                     )}
                                     <div className="flex items-center gap-1.5">
                                       <input 
-                                        type="number" 
+                                        type="text" 
+                                        inputMode="decimal"
                                         value={prices[priceKey] || ''}
-                                        onChange={(e) => setPrices(prev => ({ ...prev, [priceKey]: parseFloat(e.target.value) }))}
+                                        onChange={(e) => {
+                                          const v = e.target.value.replace(',', '.');
+                                          if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                            setPrices(prev => ({ ...prev, [priceKey]: v === '' ? 0 : parseFloat(v) }));
+                                          }
+                                        }}
                                         placeholder="0"
                                         disabled={!canEdit}
                                         className={cn(
                                           "w-full text-[11px] border-b border-gray-200 focus:border-blue-500 outline-none py-0.5 px-0.5 font-bold",
-                                          canEdit ? "group-hover:bg-blue-50/30" : "bg-gray-50 text-gray-500 cursor-not-allowed"
+                                          canEdit ? "group-hover:bg-blue-50/30 text-gray-900" : "bg-gray-50 text-gray-500 cursor-not-allowed"
                                         )}
                                       />
                                       <span className="text-[9px] text-gray-400 whitespace-nowrap">₽/{unit}</span>
@@ -1126,9 +1174,16 @@ const CalculatorView = ({
   currentProjectName,
   onNewProject,
   showPrompt,
+  showConfirm,
   productionFormat,
   productionSettings,
-  ownProductionConfig
+  ownProductionConfig,
+  mergedMaterials,
+  setMergedMaterials,
+  isGluingMode,
+  setIsGluingMode,
+  selectedForGlue,
+  setSelectedForGlue
 }: {
   handleFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   handleCuttingTypeChange: (type: 'nesting' | 'saw') => void;
@@ -1173,9 +1228,16 @@ const CalculatorView = ({
   currentProjectName: string | null;
   onNewProject: () => void;
   showPrompt: (title: string, message: string, defaultValue: string, onConfirm: (value: string) => void) => void;
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void;
   productionFormat: ProductionFormat;
   productionSettings: any;
   ownProductionConfig: OwnProductionConfig;
+  mergedMaterials: Record<string, string>;
+  setMergedMaterials: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  isGluingMode: boolean;
+  setIsGluingMode: (val: boolean) => void;
+  selectedForGlue: string[];
+  setSelectedForGlue: React.Dispatch<React.SetStateAction<string[]>>;
 }) => {
   const handleSave = () => {
     if (currentProjectId && currentProjectName) {
@@ -1195,19 +1257,28 @@ const CalculatorView = ({
             <LayoutDashboard className="w-8 h-8 text-blue-600" />
             <h1 className="text-3xl font-bold text-gray-900">Мебельный калькулятор</h1>
           </div>
-          {currentProjectId && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-xl border border-blue-100">
-              <FolderOpen className="w-4 h-4" />
-              <span className="text-sm font-bold truncate max-w-[200px]">{currentProjectName}</span>
-              <button 
-                onClick={onNewProject}
-                className="ml-2 p-1 hover:bg-blue-200 rounded-lg transition-colors"
-                title="Новый проект"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={onNewProject}
+              className="flex items-center gap-2 px-4 py-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all font-medium"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Сбросить
+            </button>
+            {currentProjectId && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-xl border border-blue-100">
+                <FolderOpen className="w-4 h-4" />
+                <span className="text-sm font-bold truncate max-w-[200px]">{currentProjectName}</span>
+                <button 
+                  onClick={onNewProject}
+                  className="ml-2 p-1 hover:bg-blue-200 rounded-lg transition-colors"
+                  title="Новый проект"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         
         {!results && (
@@ -1321,7 +1392,7 @@ const CalculatorView = ({
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                             <input 
                               type="text"
-                              placeholder="Поиск декора в базе..."
+                              placeholder="Поиск ..."
                               value={selectedDecor[key] || ''}
                               onChange={(e) => {
                                 const val = e.target.value;
@@ -1336,7 +1407,8 @@ const CalculatorView = ({
                                   <button 
                                     key={`${d.brand}|${d.name}`}
                                     onClick={() => {
-                                      const fullName = `${d.brand} ${d.name}`;
+                                      const selectedType = (item.type === 'ХДФ' && sheetConfigs[key]?.name) ? sheetConfigs[key].name : d.brand;
+                                      const fullName = `${selectedType} ${d.name}`;
                                       setSelectedDecor(prev => ({ ...prev, [key]: fullName }));
                                       setSearchQuery('');
                                       
@@ -1344,8 +1416,11 @@ const CalculatorView = ({
                                       const brandConfig = LDSP_BRANDS.find(b => b.name.includes(d.brand));
                                       if (brandConfig) updateSheetConfig(key, brandConfig);
                                       
+                                      // If we merged this material as a target of a facade, we should probably update facades too or vice versa
+                                      // But let's keep it simple for now and just set decor.
+                                      
                                       // Auto set edge decor
-                                      if (d.brand === 'Egger') {
+                                      if (d.brand === 'Egger' || d.brand === 'Evosoft') {
                                         setEdgeDecor(prev => ({ ...prev, [key]: d.name }));
                                       } else if (d.brand === 'Nordeco') {
                                         const mapping = NORDECO_EDGE_MAPPING[d.name];
@@ -1357,7 +1432,7 @@ const CalculatorView = ({
                                     }}
                                     className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0"
                                   >
-                                    <span className="font-bold text-blue-600">{d.brand}</span> {d.name}
+                                    <span className="font-bold text-blue-600">{item.type === 'ХДФ' ? (sheetConfigs[key]?.name || 'ХДФ') : d.brand}</span> {d.name}
                                   </button>
                                 ))}
                               </div>
@@ -1366,62 +1441,86 @@ const CalculatorView = ({
                         </div>
                       </div>
                       
-                      {item.type !== 'ХДФ' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
-                          <div>
-                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Бренд плиты</label>
-                            <select 
-                              onChange={(e) => {
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                            {item.type === 'ХДФ' ? 'Тип плиты' : 'Бренд плиты'}
+                          </label>
+                          <select 
+                            value={sheetConfigs[key]?.name || ''}
+                            onChange={(e) => {
+                              if (item.type === 'ХДФ') {
+                                updateSheetConfig(key, { 
+                                  name: e.target.value, 
+                                  width: sheetConfigs[key]?.width || 2800, 
+                                  height: sheetConfigs[key]?.height || 2070 
+                                });
+                              } else {
                                 const brand = LDSP_BRANDS.find(b => b.name.includes(e.target.value));
                                 if (brand) updateSheetConfig(key, brand);
-                              }}
-                              className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600"
-                            >
-                              <option value="">Выберите бренд...</option>
-                              {LDSP_BRANDS.map(b => <option key={b.name} value={b.name}>{b.name.split(' ')[0]}</option>)}
-                            </select>
-                            <div className="mt-2 flex items-center gap-1">
-                              <input 
-                                type="number"
-                                value={sheetConfigs[key]?.width || 2800}
-                                onChange={(e) => updateSheetConfig(key, { width: parseInt(e.target.value) || 0, height: sheetConfigs[key]?.height || 2070, name: 'Custom' })}
-                                className="w-1/2 p-1 border border-gray-100 rounded text-[10px] font-bold text-center focus:border-blue-300 outline-none"
-                                title="Ширина листа"
-                              />
-                              <span className="text-[10px] text-gray-300">×</span>
-                              <input 
-                                type="number"
-                                value={sheetConfigs[key]?.height || 2070}
-                                onChange={(e) => updateSheetConfig(key, { width: sheetConfigs[key]?.width || 2800, height: parseInt(e.target.value) || 0, name: 'Custom' })}
-                                className="w-1/2 p-1 border border-gray-100 rounded text-[10px] font-bold text-center focus:border-blue-300 outline-none"
-                                title="Высота листа"
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Толщина кромки</label>
-                            <select 
-                              value={edgeThickness[key] || '0.4'}
-                              onChange={(e) => setEdgeThickness(prev => ({ ...prev, [key]: e.target.value }))}
-                              className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                            >
-                              <option value="0.4">0.4 мм</option>
-                              <option value="1">1.0 мм</option>
-                              <option value="2">2.0 мм</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Декор кромки</label>
+                              }
+                            }}
+                            className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600"
+                          >
+                            {item.type === 'ХДФ' ? (
+                              <>
+                                <option value="">Выберите тип...</option>
+                                <option value="ХДФ">ХДФ</option>
+                                <option value="ДВП">ДВП</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="">Выберите бренд...</option>
+                                {LDSP_BRANDS.map(b => <option key={b.name} value={b.name}>{b.name.split(' ')[0]}</option>)}
+                              </>
+                            )}
+                          </select>
+                          <div className="mt-2 flex items-center gap-1">
                             <input 
-                              type="text"
-                              placeholder="Название кромки..."
-                              value={edgeDecor[key] || ''}
-                              onChange={(e) => setEdgeDecor(prev => ({ ...prev, [key]: e.target.value }))}
-                              className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                              type="number"
+                              value={sheetConfigs[key]?.width || 2800}
+                              onChange={(e) => updateSheetConfig(key, { width: parseInt(e.target.value) || 0, height: sheetConfigs[key]?.height || 2070, name: 'Custom' })}
+                              className="w-1/2 p-1 border border-gray-100 rounded text-[10px] font-bold text-center focus:border-blue-300 outline-none"
+                              title="Ширина листа"
+                            />
+                            <span className="text-[10px] text-gray-300">×</span>
+                            <input 
+                              type="number"
+                              value={sheetConfigs[key]?.height || 2070}
+                              onChange={(e) => updateSheetConfig(key, { width: sheetConfigs[key]?.width || 2800, height: parseInt(e.target.value) || 0, name: 'Custom' })}
+                              className="w-1/2 p-1 border border-gray-100 rounded text-[10px] font-bold text-center focus:border-blue-300 outline-none"
+                              title="Высота листа"
                             />
                           </div>
                         </div>
-                      )}
+
+                        {item.type !== 'ХДФ' && (
+                          <>
+                            <div>
+                              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Толщина кромки</label>
+                              <select 
+                                value={edgeThickness[key] || '0.4'}
+                                onChange={(e) => setEdgeThickness(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                              >
+                                <option value="0.4">0.4 мм</option>
+                                <option value="1">1.0 мм</option>
+                                <option value="2">2.0 мм</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Декор кромки</label>
+                              <input 
+                                type="text"
+                                placeholder="Название кромки..."
+                                value={edgeDecor[key] || ''}
+                                onChange={(e) => setEdgeDecor(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -1490,7 +1589,11 @@ const CalculatorView = ({
                                 <input 
                                   type="number"
                                   value={sheetConfigs[key]?.width || 2800}
-                                  onChange={(e) => updateSheetConfig(key, { width: parseInt(e.target.value) || 0, height: sheetConfigs[key]?.height || 2070, name: 'Custom' })}
+                                  onChange={(e) => updateSheetConfig(key, { 
+                                    width: parseInt(e.target.value) || 0, 
+                                    height: sheetConfigs[key]?.height || 2070, 
+                                    name: sheetConfigs[key]?.name || (item.type === 'ХДФ' ? 'ХДФ' : 'Custom') 
+                                  })}
                                   className="w-1/2 p-1 border border-gray-100 rounded text-[10px] font-bold text-center focus:border-blue-300 outline-none"
                                   title="Ширина листа"
                                 />
@@ -1498,7 +1601,11 @@ const CalculatorView = ({
                                 <input 
                                   type="number"
                                   value={sheetConfigs[key]?.height || 2070}
-                                  onChange={(e) => updateSheetConfig(key, { width: sheetConfigs[key]?.width || 2800, height: parseInt(e.target.value) || 0, name: 'Custom' })}
+                                  onChange={(e) => updateSheetConfig(key, { 
+                                    width: sheetConfigs[key]?.width || 2800, 
+                                    height: parseInt(e.target.value) || 0, 
+                                    name: sheetConfigs[key]?.name || (item.type === 'ХДФ' ? 'ХДФ' : 'Custom') 
+                                  })}
                                   className="w-1/2 p-1 border border-gray-100 rounded text-[10px] font-bold text-center focus:border-blue-300 outline-none"
                                   title="Высота листа"
                                 />
@@ -1510,7 +1617,7 @@ const CalculatorView = ({
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                                 <input 
                                   type="text"
-                                  placeholder="Поиск декора..."
+                                  placeholder="Поиск ..."
                                   value={selectedDecor[key] || ''}
                                   onChange={(e) => {
                                     const val = e.target.value;
@@ -1581,6 +1688,41 @@ const CalculatorView = ({
                               />
                             </div>
                           </div>
+                        </div>
+                      )}
+
+                      {/* Merge Logic */}
+                      {(facadeType[key] || 'sheet') === 'sheet' && selectedDecor[key] && (
+                        <div className="pt-2">
+                          {Object.keys(results).filter(lk => results[lk].type === 'ЛДСП' && selectedDecor[lk] === selectedDecor[key]).map(lk => (
+                            <div key={lk} className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100 mb-4">
+                              <div className="flex items-center gap-2 text-sm text-blue-900">
+                                <Combine className="w-4 h-4 text-blue-600" />
+                                <span>Декор совпадает с материалом корпуса <strong>"{results[lk].color}"</strong>. Объединить в один раскрой?</span>
+                              </div>
+                              <div className="flex gap-2">
+                                {mergedMaterials[key] === lk ? (
+                                  <button 
+                                    onClick={() => setMergedMaterials(prev => {
+                                      const next = { ...prev };
+                                      delete next[key];
+                                      return next;
+                                    })}
+                                    className="px-3 py-1 bg-white text-blue-600 border border-blue-200 rounded-lg text-xs font-bold hover:bg-blue-100"
+                                  >
+                                    Отменить объединение
+                                  </button>
+                                ) : (
+                                  <button 
+                                    onClick={() => setMergedMaterials(prev => ({ ...prev, [key]: lk }))}
+                                    className="px-4 py-1 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 shadow-sm"
+                                  >
+                                    Объединить
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
 
@@ -1665,7 +1807,7 @@ const CalculatorView = ({
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                                 <input 
                                   type="text"
-                                  placeholder="Поиск декора..."
+                                  placeholder="Поиск ..."
                                   value={selectedDecor[key] || ''}
                                   onChange={(e) => {
                                     const val = e.target.value;
@@ -1776,6 +1918,17 @@ const CalculatorView = ({
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-6">
+                                      {item.type !== 'ХДФ' && (
+                                        <button
+                                          onClick={() => setIsGluingMode(!isGluingMode)}
+                                          className={cn(
+                                            "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                                            isGluingMode ? "bg-red-500 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                                          )}
+                                        >
+                                          {isGluingMode ? 'Закончить склейку' : 'Указать склейку'}
+                                        </button>
+                                      )}
                                       <label className="flex items-center gap-2 text-sm font-medium text-gray-600 cursor-pointer">
                                         <input 
                                           type="checkbox" 
@@ -1818,7 +1971,17 @@ const CalculatorView = ({
                                       }
 
                                       return (
-                                        <div key={i} className="bg-blue-100 border border-blue-300 text-[10px] p-1 absolute flex flex-col items-center justify-center hover:bg-blue-200 transition-all cursor-help group z-10 hover:z-50" style={{ 
+                                        <div key={i} className={cn(
+                                            "bg-blue-100 border border-blue-300 text-[10px] p-1 absolute flex flex-col items-center justify-center transition-all cursor-pointer group z-10 hover:z-50",
+                                            isGluingMode ? "hover:bg-red-100 border-red-300" : "hover:bg-blue-200",
+                                            isGluingMode && selectedForGlue.includes(`${key}-${sheetIndex}-${i}`) && "bg-red-500 text-white border-red-700"
+                                          )}
+                                          onClick={() => {
+                                            if (isGluingMode) {
+                                              const newId = `${key}-${sheetIndex}-${i}`;
+                                              setSelectedForGlue(prev => prev.includes(newId) ? prev.filter(x => x !== newId) : [...prev, newId]);
+                                            }
+                                          }} style={{ 
                                           left: `${((d.packedX! + trimming) / sheetConfigs[key].width) * 100}%`, 
                                           top: `${((d.packedY! + trimming) / sheetConfigs[key].height) * 100}%`, 
                                           width: `${(d.width / sheetConfigs[key].width) * 100}%`, 
@@ -1902,6 +2065,7 @@ const SummaryView = ({
   setEdgePrices, 
   edgeThickness, 
   edgeDecor, 
+  setPrices,
   facadeCustomType,
   facadeCategory,
   facadeMilling,
@@ -1924,7 +2088,13 @@ const SummaryView = ({
   productionFormat,
   productionSettings,
   userRole,
-  companyType
+  companyType,
+  mergedMaterials,
+  selectedForGlue,
+  furnitureType,
+  setFurnitureType,
+  checklistRefused,
+  setChecklistRefused
 }: { 
   results: any; 
   selectedDecor: Record<string, string>; 
@@ -1942,6 +2112,7 @@ const SummaryView = ({
   setEdgePrices: React.Dispatch<React.SetStateAction<Record<string, number>>>; 
   edgeThickness: Record<string, string>; 
   edgeDecor: Record<string, string>; 
+  setPrices: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   facadeCustomType: Record<string, 'Пленка' | 'Эмаль' | 'AGT SUPRAMATT PUR' | 'EVOSOFT PUR'>;
   facadeCategory: Record<string, string>;
   facadeMilling: Record<string, string>;
@@ -1965,6 +2136,12 @@ const SummaryView = ({
   productionSettings: any;
   userRole?: string | null;
   companyType?: string;
+  mergedMaterials: Record<string, string>;
+  selectedForGlue: string[];
+  furnitureType: string;
+  setFurnitureType: (type: string) => void;
+  checklistRefused: Record<string, boolean>;
+  setChecklistRefused: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 }) => {
   const hardwareKitPrice = hardwareKitPriceProps;
   if (!results && addedProducts.length === 0 && addedServices.length === 0) return (
@@ -1978,12 +2155,25 @@ const SummaryView = ({
   let allDataEntered = true;
   let totalLdspSheets = 0;
 
+  const configToUse = (productionFormat === 'contract' && productionSettings?.production) 
+    ? productionSettings.production 
+    : ownProductionConfig;
+
   const summaryRows = results ? Object.entries(results).flatMap(([key, item]: any) => {
-    const rows = [];
+    const rows: any[] = [];
     
+    // Skip if it's merged INTO another material
+    if (mergedMaterials[key]) return [];
+
     // Material Row
     const decor = selectedDecor[key];
-    const priceKey = typeof decor === 'string' ? decor.replace(' ', '|') : '';
+    const basePriceKey = typeof decor === 'string' ? decor.replace(/ /g, '|') : '';
+    
+    // Check if the price for this décor is manual (missing from the base config)
+    const isManualMaterial = basePriceKey ? (!configToUse.prices?.[basePriceKey] || configToUse.prices?.[basePriceKey] === 0) : true;
+    
+    // If manual, use a unique key for this specific material row to avoid price sharing
+    const priceKey = isManualMaterial ? `manual_${key}` : basePriceKey;
     const price = prices[priceKey] || 0;
     
     const isCustomFacade = item.type === 'Фасад' && facadeType[key] === 'custom';
@@ -1992,6 +2182,14 @@ const SummaryView = ({
     let itemCost = 0;
     let qtyText = '';
     let coef = coefficients[item.type === 'ХДФ' ? 'hdf' : (isSheetFacade ? 'facadeSheet' : 'ldsp')] || 1;
+
+    // Collate details for merged materials
+    const combinedDetails = [...item.details];
+    Object.entries(mergedMaterials).forEach(([mKey, targetKey]) => {
+      if (targetKey === key && results[mKey]) {
+        combinedDetails.push(...results[mKey].details);
+      }
+    });
     
     if (isCustomFacade) {
       const customType = facadeCustomType[key] || 'Пленка';
@@ -2009,13 +2207,17 @@ const SummaryView = ({
         decor: decor || 'Не выбран',
         qty: qtyText,
         price: price,
+        rawPrice: price,
+        priceKey: priceKey,
         total: Math.round(itemCost),
-        coef: 1
+        coef: 1,
+        key: key,
+        isManual: isManualMaterial
       });
     } else {
       const sheetW = (sheetConfigs[key]?.width || 2800) - (trimming * 2);
       const sheetH = (sheetConfigs[key]?.height || 2070) - (trimming * 2);
-      const sheets = packDetails(item.details, sheetW, sheetH, kerf, rotations[key] || false, cuttingType);
+      const sheets = packDetails(combinedDetails, sheetW, sheetH, kerf, rotations[key] || false, cuttingType);
       const sheetCount = sheets.length;
       const sheetArea = (sheetConfigs[key]?.width || 2800) * (sheetConfigs[key]?.height || 2070) / 1000000;
       
@@ -2035,34 +2237,131 @@ const SummaryView = ({
 
       rows.push({
         type: 'material',
-        name: item.name,
+        name: (item.type === 'ХДФ' && sheetConfigs[key]?.name) ? sheetConfigs[key].name : item.name,
         sub: item.color,
         decor: decor || 'Не выбран',
         qty: qtyText,
         price: displayPrice,
+        rawPrice: price,
+        priceKey: priceKey,
         total: Math.round(itemCost),
-        coef: coef
+        coef: coef,
+        key: key,
+        isManual: isManualMaterial
       });
     }
     
     if (price === 0) allDataEntered = false;
 
-    // Edge Row
-    if (item.type !== 'ХДФ' && (item.type !== 'Фасад' || isSheetFacade)) {
-      const isFacade = item.type === 'Фасад';
-      const edgeLenActual = (edgeToEdge[key] || isFacade)
-        ? (item.details.reduce((sum: any, d: any) => sum + ((d.width + d.height) * 2), 0) / 1000)
-        : item.edgeLength;
-      
-      const edgeLenRounded = Math.ceil(edgeLenActual);
-      const ePrice = edgePrices[key] || 0;
-      let edgeCoef = coefficients.edge;
-      if (!canEditCabinet) edgeCoef = coefficients.edge;
+    // Edge Rows (Handling multiple edge types for merged materials)
+    const edgeGroups: Record<string, {
+      thickness: string,
+      decor: string,
+      qty: number,
+      price: number,
+      key: string,
+      priceKey?: string,
+      coef: number,
+      totalLength: number
+    }> = {};
 
-      const thickness = isFacade ? '1.0' : (edgeThickness[key] || '0.4');
-      const brandStr = decor || '';
+    const clusterKeys = [key, ...Object.entries(mergedMaterials).filter(([_, target]) => target === key).map(([mKey]) => mKey)];
+
+    clusterKeys.forEach(ck => {
+      const cItem = results[ck];
+      if (!cItem || cItem.type === 'ХДФ') return;
+      
+      const isFacade = cItem.type === 'Фасад';
+      if (isFacade && facadeType[ck] === 'custom') return;
+
+      let gluedEdgeLength = 0;
+      let regularEdgeLengthToRemove = 0;
+      
+      const ckGluedIdPrefix = `${ck}-`;
+      const gluedIds = selectedForGlue.filter(id => id.startsWith(ckGluedIdPrefix));
+      
+      if (gluedIds.length > 0) {
+        const sheetW = (sheetConfigs[ck]?.width || 2800) - (trimming * 2);
+        const sheetH = (sheetConfigs[ck]?.height || 2070) - (trimming * 2);
+        const sheets = packDetails(cItem.details, sheetW, sheetH, kerf, rotations[ck] || false, cuttingType);
+        
+        const perimeterSum = gluedIds.reduce((sum, id) => {
+          const parts = id.split('-');
+          const idxStr = parts.pop()!;
+          const sheetStr = parts.pop()!;
+          const sIdx = parseInt(sheetStr, 10);
+          const iIdx = parseInt(idxStr, 10);
+          const d = sheets[sIdx]?.[iIdx];
+          if (d) {
+             return sum + ((d.width + d.height) * 2 / 1000);
+          }
+          return sum;
+        }, 0);
+        
+        regularEdgeLengthToRemove = perimeterSum;
+        gluedEdgeLength = perimeterSum / 2;
+      }
+
+      let edgeLenActual = (edgeToEdge[ck] || isFacade)
+        ? (cItem.details.reduce((sum: any, d: any) => sum + ((d.width + d.height) * 2), 0) / 1000)
+        : cItem.edgeLength;
+        
+      edgeLenActual = Math.max(0, edgeLenActual - regularEdgeLengthToRemove);
+
+      const thickness = isFacade ? '1.0' : (edgeThickness[ck] || '0.4');
+      const decor = edgeDecor[ck] || 'Не указан';
+      const price = edgePrices[ck] || 0;
+      const coef = coefficients.edge || 1.5;
+
+      const groupKey = `${thickness}|${decor}`;
+
+      if (!edgeGroups[groupKey]) {
+        edgeGroups[groupKey] = {
+          thickness,
+          decor,
+          qty: 0,
+          price,
+          key: ck,
+          coef,
+          totalLength: 0
+        };
+      }
+      edgeGroups[groupKey].totalLength += edgeLenActual;
+      
+      // Glued edge row
+      if (gluedEdgeLength > 0) {
+        const gluedGroupKey = `glued|${ck}`;
+        const priceKey = `${ck}-glued`;
+        if (!edgeGroups[gluedGroupKey]) {
+          edgeGroups[gluedGroupKey] = {
+            thickness: 'Склейка (доп.)',
+            decor: decor,
+            qty: 0,
+            price: edgePrices[priceKey] || 0,
+            priceKey: priceKey,
+            key: ck,
+            coef,
+            totalLength: 0
+          };
+        }
+        edgeGroups[gluedGroupKey].totalLength += gluedEdgeLength;
+      }
+    });
+
+    Object.values(edgeGroups).forEach(group => {
+      const edgeLenRounded = Math.ceil(group.totalLength);
+      const brandStr = selectedDecor[group.key] || '';
       const brandName = Object.keys(LDSP_DATABASE).find(b => brandStr.startsWith(b)) || '';
-      const mKey = `${brandName}:${thickness}`;
+      const thickness = group.thickness;
+
+      
+      const detectedEdgeBrand = brandName ? LDSP_TO_EDGE_BRANDS[brandName]?.find(eb => 
+        String(group.decor).toLowerCase().includes(String(eb).toLowerCase())
+      ) : null;
+      
+      const mKey = detectedEdgeBrand 
+        ? `${brandName}:${detectedEdgeBrand}:${thickness}` 
+        : `${brandName}:${thickness}`;
       
       const configToUse = (productionFormat === 'contract' && productionSettings?.production) 
         ? productionSettings.production 
@@ -2070,36 +2369,36 @@ const SummaryView = ({
         
       const multiplicity = configToUse.edgeMultiplicity?.[mKey] || 0;
       
-      let eCost = edgeLenRounded * ePrice * edgeCoef;
+      let eCost = edgeLenRounded * group.price * group.coef;
       let displayQty = `${edgeLenRounded} м`;
       
       if (multiplicity > 0) {
-        const buyLen = Math.ceil(edgeLenActual / multiplicity) * multiplicity;
+        const buyLen = Math.ceil(group.totalLength / multiplicity) * multiplicity;
         if (buyLen > edgeLenRounded) {
-          // Logic: Material = buyLen * ePrice, Work = edgeLenRounded * ePrice * (edgeCoef - 1)
-          eCost = (buyLen * ePrice) + (edgeLenRounded * ePrice * (edgeCoef - 1));
+          eCost = (buyLen * group.price) + (edgeLenRounded * group.price * (group.coef - 1));
           displayQty = `${buyLen} м`;
         }
       }
 
-      if (ePrice === 0) allDataEntered = false;
+      if (group.price === 0) allDataEntered = false;
 
       const showPurchasePrice = userRole === 'admin' || companyType === 'Дизайнер';
-      const displayPrice = showPurchasePrice ? ePrice : Math.round(ePrice * edgeCoef);
+      const displayPrice = showPurchasePrice ? group.price : Math.round(group.price * group.coef);
 
       rows.push({
         type: 'edge',
-        name: `Кромка (${thickness} мм)`,
-        sub: edgeDecor[key] || 'Не указан',
-        decor: edgeDecor[key] || 'Не указан',
+        name: String(thickness).includes('Склейка') ? 'Кромка (Склейка)' : `Кромка (${thickness} мм)`,
+        sub: group.decor,
+        decor: group.decor,
         qty: displayQty,
         price: displayPrice,
         total: Math.round(eCost),
         isEdge: true,
-        key: key,
-        coef: edgeCoef
+        key: group.key,
+        priceKey: group.priceKey,
+        coef: group.coef
       });
-    }
+    });
 
     return rows;
   }) : [];
@@ -2137,6 +2436,8 @@ const SummaryView = ({
   // Add Added Services
   addedServices.forEach(service => {
     const price = service.price !== undefined ? service.price : (prices[service.name] || 0);
+    const isManualService = service.price === undefined && (!configToUse.prices?.[service.name] || configToUse.prices?.[service.name] === 0);
+
     summaryRows.push({
       type: 'service',
       name: service.name,
@@ -2145,61 +2446,89 @@ const SummaryView = ({
       qty: `${service.quantity} ${service.unit}`,
       price: price,
       total: price * service.quantity,
-      coef: 1
+      coef: 1,
+      isManual: isManualService
     });
   });
 
   totalCost = summaryRows.reduce((sum, row) => sum + row.total, 0);
 
-  // Add Assembly Fee if enabled
-  if (serviceData.assembly) {
-    const assemblyCoef = currentCoefficients.assembly || 1.5;
-    const assemblyFee = Math.round(totalCost * (assemblyPercentage / 100) * assemblyCoef);
-    summaryRows.push({
-      type: 'service',
-      name: 'Базовый пакет сборки',
-      sub: `Сервис (${assemblyPercentage}% от стоимости)`,
-      decor: '-',
-      qty: '1 усл',
-      price: assemblyFee,
-      total: assemblyFee,
-      coef: assemblyCoef
-    });
-    totalCost += assemblyFee;
-  }
+    // Add Assembly Fee if enabled
+    if (serviceData.assembly) {
+      const assemblyCoef = currentCoefficients.assembly || 1.5;
+      const assemblyFee = Math.round(totalCost * (assemblyPercentage / 100) * assemblyCoef);
+      summaryRows.push({
+        type: 'service',
+        name: 'Базовый пакет сборки',
+        sub: `Сервис (${assemblyPercentage}% от стоимости)`,
+        decor: '-',
+        qty: '1 усл',
+        price: assemblyFee,
+        total: assemblyFee,
+        coef: assemblyCoef
+      });
+      totalCost += assemblyFee;
+    }
+  
+    // Add Delivery Fee if enabled
+    if (serviceData.delivery) {
+      const deliveryCoef = currentCoefficients.delivery || 1.5;
+      let deliveryFee = deliveryTariffs.basePrice;
+      
+      if (serviceData.distance > deliveryTariffs.baseDistance) {
+        deliveryFee += (serviceData.distance - deliveryTariffs.baseDistance) * deliveryTariffs.extraKmPrice;
+      }
+  
+      // Calculate total volume (rough estimation based on sheets)
+      const totalVolume = totalLdspSheets * 0.1; // Assuming 0.1m3 per sheet
+      if (totalVolume > deliveryTariffs.baseVolume) {
+        deliveryFee += (totalVolume - deliveryTariffs.baseVolume) * deliveryTariffs.extraVolumePrice;
+      }
+  
+      // NEW: Loading/Lift calculation
+      let loadingFee = deliveryTariffs.loadingBase;
+      const floor = parseInt(serviceData.address.floor) || 0;
+      if (floor > 1) {
+        if (serviceData.address.elevator === 'none') {
+          loadingFee += (floor - 1) * deliveryTariffs.floorPrice;
+        } else {
+          loadingFee += deliveryTariffs.elevatorPrice;
+        }
+      }
+      deliveryFee += loadingFee;
 
-  // Add Delivery Fee if enabled
-  if (serviceData.delivery) {
-    const deliveryCoef = currentCoefficients.delivery || 1.5;
-    let deliveryFee = deliveryTariffs.basePrice;
+      if (serviceData.extraLoader) {
+        deliveryFee += deliveryTariffs.extraLoaderPrice;
+      }
+  
+      const finalDeliveryFee = Math.round(deliveryFee * deliveryCoef);
+      summaryRows.push({
+        type: 'service',
+        name: 'Доставка на объект',
+        sub: `Сервис (${serviceData.distance} км${serviceData.extraLoader ? ', +1 грузчик' : ''}${floor > 0 ? `, ${floor} эт.` : ''})`,
+        decor: '-',
+        qty: '1 усл',
+        price: finalDeliveryFee,
+        total: finalDeliveryFee,
+        coef: deliveryCoef
+      });
+      totalCost += finalDeliveryFee;
+    }
     
-    if (serviceData.distance > deliveryTariffs.baseDistance) {
-      deliveryFee += (serviceData.distance - deliveryTariffs.baseDistance) * deliveryTariffs.extraKmPrice;
-    }
+  const [showChecklistWindow, setShowChecklistWindow] = useState(false);
 
-    // Calculate total volume (rough estimation based on sheets)
-    const totalVolume = totalLdspSheets * 0.1; // Assuming 0.1m3 per sheet
-    if (totalVolume > deliveryTariffs.baseVolume) {
-      deliveryFee += (totalVolume - deliveryTariffs.baseVolume) * deliveryTariffs.extraVolumePrice;
-    }
-
-    if (serviceData.extraLoader) {
-      deliveryFee += deliveryTariffs.extraLoaderPrice;
-    }
-
-    const finalDeliveryFee = Math.round(deliveryFee * deliveryCoef);
-    summaryRows.push({
-      type: 'service',
-      name: 'Доставка на объект',
-      sub: `Сервис (${serviceData.distance} км${serviceData.extraLoader ? ', +1 грузчик' : ''})`,
-      decor: '-',
-      qty: '1 усл',
-      price: finalDeliveryFee,
-      total: finalDeliveryFee,
-      coef: deliveryCoef
+  // Function to determine if an item is present in the summary rows
+  const isItemPresent = (itemName: string) => {
+    const lowerItemName = itemName.toLowerCase();
+    return summaryRows.some(row => {
+      const rowName = row.name.toLowerCase();
+      // Simple logic: check if the row name contains the checklist item name
+      // Can be refined if specific matching logic is needed.
+      return rowName.includes(lowerItemName);
     });
-    totalCost += finalDeliveryFee;
-  }
+  };
+
+  const currentChecklist = furnitureType && furnitureType in FURNITURE_CHECKLISTS ? FURNITURE_CHECKLISTS[furnitureType as FurnitureType] : null;
 
   const finalTotal = allDataEntered ? Math.round(totalCost) : 0;
 
@@ -2245,31 +2574,159 @@ const SummaryView = ({
 
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-800">Итоговый расчет проекта</h2>
+        
+        <div className="flex items-center gap-3">
+          {currentChecklist && (
+            <button
+              onClick={() => setShowChecklistWindow(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            >
+              <ClipboardList className="w-4 h-4" />
+              <span className="font-bold text-sm">Чек-лист</span>
+            </button>
+          )}
+
+          <label className="text-sm font-bold text-gray-500 ml-4">Тип мебели:</label>
+          <select 
+            value={furnitureType}
+            onChange={(e) => setFurnitureType(e.target.value)}
+            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]"
+          >
+            <option value="">Не указан</option>
+            {Object.keys(FURNITURE_CHECKLISTS).map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
       </div>
+      
+      {currentChecklist && !showChecklistWindow && (
+        <button
+          onClick={() => setShowChecklistWindow(true)}
+          className="fixed right-6 bottom-24 z-50 flex items-center justify-center p-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full shadow-lg shadow-blue-500/30 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 animate-in slide-in-from-right-8 group"
+        >
+          <ClipboardList className="w-6 h-6 flex-shrink-0" />
+          <span className="font-bold text-sm transition-all duration-300 overflow-hidden max-w-0 group-hover:max-w-[150px] group-hover:ml-2 opacity-0 group-hover:opacity-100 whitespace-nowrap">
+            Чек-лист
+          </span>
+          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+          </span>
+        </button>
+      )}
+
+      {showChecklistWindow && currentChecklist && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-end p-4 sm:p-6 pb-20 sm:pb-6 bg-black/20 backdrop-blur-sm pointer-events-auto" onClick={(e) => e.target === e.currentTarget && setShowChecklistWindow(false)}>
+          <div className="w-full max-w-sm h-full max-h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right-8 duration-300">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-white relative z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 leading-tight">Чек-лист продаж</h3>
+                  <p className="text-xs text-gray-500">{furnitureType}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowChecklistWindow(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-5 pb-10 space-y-6">
+              <p className="text-sm text-gray-500 mb-2">Проверьте, не забыли ли вы предложить клиенту следующие позиции:</p>
+              
+              {currentChecklist.map((group, gIdx) => (
+                <div key={gIdx} className="space-y-2">
+                  <div className="h-px w-full bg-gradient-to-r from-gray-200 to-transparent mb-3" />
+                  {group.items.map((item, idx) => {
+                    const isRefused = checklistRefused[`${furnitureType}_${item}`];
+                    const isPresent = isItemPresent(item);
+                    
+                    return (
+                      <div key={idx} className={cn(
+                        "flex items-center justify-between p-3 rounded-xl border transition-all group",
+                        isRefused ? "bg-gray-50/50 border-gray-100 opacity-60" :
+                        isPresent ? "bg-green-50/50 border-green-200" : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-sm"
+                      )}>
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={cn(
+                            "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-colors",
+                            isRefused ? "bg-gray-200 text-gray-500" :
+                            isPresent ? "bg-green-500 text-white" : "bg-gray-100 text-gray-400"
+                          )}>
+                            {isRefused ? <UserX className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                          </div>
+                          <span className={cn(
+                            "text-sm font-medium truncate",
+                            isRefused ? "text-gray-400 line-through" :
+                            isPresent ? "text-green-800" : "text-gray-700"
+                          )}>
+                            {item}
+                          </span>
+                        </div>
+                        
+                        {!isPresent && !isRefused && (
+                          <button
+                            onClick={() => setChecklistRefused(prev => ({...prev, [`${furnitureType}_${item}`]: true}))}
+                            className="opacity-0 group-hover:opacity-100 ml-2 px-2 py-1 text-[10px] font-bold tracking-wider uppercase bg-gray-100 hover:bg-red-50 text-gray-500 hover:text-red-600 rounded flex-shrink-0 transition-all"
+                            title="Клиенту не надо"
+                          >
+                            Отказ
+                          </button>
+                        )}
+                        
+                        {isRefused && (
+                          <button
+                            onClick={() => {
+                              const newRefused = { ...checklistRefused };
+                              delete newRefused[`${furnitureType}_${item}`];
+                              setChecklistRefused(newRefused);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 ml-2 px-2 py-1 text-[10px] font-bold tracking-wider uppercase text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded flex-shrink-0 transition-all"
+                            title="Вернуть в список"
+                          >
+                            Вернуть
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Материал / Параметры</th>
-              <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Декор</th>
-              <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Кол-во</th>
-              <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Цена</th>
-              <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Итого</th>
+              <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Материал / Параметры</th>
+              <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Декор</th>
+              <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Кол-во</th>
+              <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Цена</th>
+              <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Итого</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {summaryRows.filter(r => r.type === 'material' || r.type === 'edge' || r.type === 'hardware').map((row, idx) => {
               const isMaterial = row.type === 'material';
               const isFirst = idx === 0;
+              const stableKey = `${row.type}-${row.key}-${idx}`;
               
               return (
-                <tr key={idx} className={cn(
+                <tr key={stableKey} className={cn(
                   "hover:bg-gray-50 transition-colors", 
                   row.isEdge && "bg-gray-50/20",
                   isMaterial && !isFirst && "border-t border-gray-200/60"
                 )}>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-2">
                   <div className={cn(
                     "font-medium text-gray-900",
                     row.isEdge && "pl-6 flex items-center gap-2 text-gray-600 text-sm"
@@ -2284,7 +2741,7 @@ const SummaryView = ({
                     row.isEdge && "pl-11"
                   )}>{row.sub}</div>
                 </td>
-                <td className="px-6 py-4">
+                <td className="px-6 py-2">
                   <span className={cn(
                     "text-sm font-medium", 
                     row.decor === 'Не выбран' || row.decor === 'Не указан' ? "text-gray-400 italic" : "text-blue-600",
@@ -2293,24 +2750,49 @@ const SummaryView = ({
                     {row.decor}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-right font-mono text-sm">
+                <td className="px-6 py-2 text-right text-sm font-medium">
                   <span className={cn(row.isEdge && "text-xs text-gray-500")}>
                     {row.qty}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-right font-mono text-sm">
+                <td className="px-6 py-2 text-right text-sm font-medium">
                   {row.isEdge ? (
                     <div className="flex items-center justify-end gap-2">
                       <input 
-                        type="number"
-                        value={edgePrices[row.key!] || ''}
-                        onChange={(e) => setEdgePrices(prev => ({ ...prev, [row.key!]: parseFloat(e.target.value) || 0 }))}
+                        type="text"
+                        inputMode="decimal"
+                        value={edgePrices[row.priceKey || row.key!] || ''}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(',', '.');
+                          if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                            setEdgePrices(prev => ({ ...prev, [row.priceKey || row.key!]: v === '' ? 0 : parseFloat(v) }));
+                          }
+                        }}
                         placeholder="0"
                         disabled={!canEditCabinet}
                         className={cn(
-                          "w-20 p-1 border rounded text-right text-sm outline-none",
+                          "w-20 p-1 border rounded text-right text-sm outline-none text-gray-900",
                           !canEditCabinet ? "bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed" : "border-gray-200 focus:ring-1 focus:ring-blue-500"
                         )}
+                      />
+                      <span>₽</span>
+                    </div>
+                  ) : row.type === 'material' && row.isManual ? (
+                    <div className="flex items-center justify-end gap-2">
+                      <input 
+                        type="text"
+                        inputMode="decimal"
+                        value={prices[row.priceKey!] || ''}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(',', '.');
+                          if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                            setPrices(prev => ({ ...prev, [row.priceKey!]: v === '' ? 0 : parseFloat(v) }));
+                          }
+                        }}
+                        placeholder="0"
+                        className="w-20 p-1 border border-blue-200 rounded text-right text-sm outline-none focus:ring-1 focus:ring-blue-500 bg-blue-50/50"
                       />
                       <span>₽</span>
                     </div>
@@ -2318,7 +2800,7 @@ const SummaryView = ({
                     `${(row.price ?? 0).toLocaleString()} ₽`
                   )}
                 </td>
-                <td className="px-6 py-4 text-right font-bold text-gray-900">
+                <td className="px-6 py-2 text-right font-bold text-gray-900">
                   <span className={cn(row.isEdge && "text-sm font-medium text-gray-600")}>
                     {(row.total ?? 0).toLocaleString()} ₽
                   </span>
@@ -2336,18 +2818,18 @@ const SummaryView = ({
                 </tr>
                 {summaryRows.filter(r => r.type === 'product').map((row, idx) => (
                   <tr key={`prod-${idx}`} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-2">
                       <div className="font-medium text-gray-900">{row.name}</div>
                       <div className="text-xs text-gray-500">{row.sub}</div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-2">
                       <span className="text-sm font-medium text-gray-400">-</span>
                     </td>
-                    <td className="px-6 py-4 text-right font-mono text-sm">{row.qty}</td>
-                    <td className="px-6 py-4 text-right font-mono text-sm">
+                    <td className="px-6 py-2 text-right text-sm font-medium">{row.qty}</td>
+                    <td className="px-6 py-2 text-right text-sm font-medium">
                       {(row.price ?? 0).toLocaleString()} ₽
                     </td>
-                    <td className="px-6 py-4 text-right font-bold text-gray-900">{(row.total ?? 0).toLocaleString()} ₽</td>
+                    <td className="px-6 py-2 text-right font-bold text-gray-900">{(row.total ?? 0).toLocaleString()} ₽</td>
                   </tr>
                 ))}
               </>
@@ -2361,18 +2843,39 @@ const SummaryView = ({
                 </tr>
                 {summaryRows.filter(r => r.type === 'service').map((row, idx) => (
                   <tr key={`serv-${idx}`} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-2">
                       <div className="font-medium text-gray-900">{row.name}</div>
                       <div className="text-xs text-gray-500">{row.sub}</div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-2">
                       <span className="text-sm font-medium text-gray-400">-</span>
                     </td>
-                    <td className="px-6 py-4 text-right font-mono text-sm text-green-600">{row.qty}</td>
-                    <td className="px-6 py-4 text-right font-mono text-sm text-green-600">
-                      {(row.price ?? 0).toLocaleString()} ₽
+                    <td className="px-6 py-2 text-right text-sm font-medium text-green-600">{row.qty}</td>
+                    <td className="px-6 py-2 text-right text-sm font-medium text-green-600">
+                      {row.isManual ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={prices[row.name] || ''}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d*$/.test(val)) {
+                                setPrices(prev => ({ ...prev, [row.name]: val === '' ? 0 : parseInt(val) }));
+                              }
+                            }}
+                            placeholder="0"
+                            className="w-20 p-1 border border-blue-200 rounded text-right text-sm outline-none focus:ring-1 focus:ring-blue-500 bg-blue-50/50"
+                          />
+                          <span>₽</span>
+                        </div>
+                      ) : (
+                        `${(row.price ?? 0).toLocaleString()} ₽`
+                      )}
                     </td>
-                    <td className="px-6 py-4 text-right font-bold text-green-600">{(row.total ?? 0).toLocaleString()} ₽</td>
+                    <td className="px-6 py-2 text-right font-bold text-green-600">{(row.total ?? 0).toLocaleString()} ₽</td>
                   </tr>
                 ))}
               </>
@@ -2380,8 +2883,8 @@ const SummaryView = ({
           </tbody>
           <tfoot>
             <tr className="bg-blue-50">
-              <td colSpan={3} className="px-6 py-6 text-right font-bold text-gray-700 text-lg">Общая стоимость:</td>
-              <td colSpan={2} className="px-6 py-6 text-right font-black text-blue-600 text-2xl">
+              <td colSpan={3} className="px-6 py-4 text-right font-bold text-gray-700 text-lg">Общая стоимость:</td>
+              <td colSpan={2} className="px-6 py-4 text-right font-black text-blue-600 text-2xl">
                 {finalTotal > 0 ? `${(finalTotal ?? 0).toLocaleString()} ₽` : '0 ₽'}
                 {!allDataEntered && <div className="text-[10px] text-gray-400 font-normal mt-1">Заполните все цены</div>}
               </td>
@@ -2477,7 +2980,9 @@ const SettingsView = ({
   toggleSpecialCondition,
   updateStandardCoefficient,
   updateSalonCoefficient,
-  ownProductionConfig
+  ownProductionConfig,
+  companyInfo,
+  setCompanyInfo
 }: { 
   coefficients: { retail: any, wholesale: any, designer: any }; 
   setCoefficients: React.Dispatch<React.SetStateAction<{ retail: any, wholesale: any, designer: any }>>; 
@@ -2512,6 +3017,8 @@ const SettingsView = ({
   updateStandardCoefficient: (cat: string, val: string) => void;
   updateSalonCoefficient: (salonId: string, cat: string, val: string) => void;
   ownProductionConfig: OwnProductionConfig;
+  companyInfo: any;
+  setCompanyInfo: React.Dispatch<React.SetStateAction<any>>;
 }) => {
   const [newCategory, setNewCategory] = useState('');
 
@@ -2772,6 +3279,9 @@ const SettingsView = ({
 
         <section>
           <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Категории товаров и коэффициенты</h3>
+          <p className="text-sm text-gray-500 mb-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
+            Добавьте категорию товара, если она будет иметь иной коэфициент, отличающийся от общей фурнитуры. Коэффиценты можно настроить в таблице ниже.
+          </p>
           <div className="space-y-4">
             <div className="flex gap-2">
               <input
@@ -2857,145 +3367,168 @@ const SettingsView = ({
         </section>
         
         {!isProduction && (
-          <section>
-            <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Сервисные услуги</h3>
-            <div className="grid gap-4">
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Процент сборки (%)</span>
-                  <span className="text-xs text-gray-500">От общей стоимости заказа</span>
-                  {productionFormat === 'contract' && productionSettings?.general?.assemblyPercentage !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">Цена производства: {productionSettings.general.assemblyPercentage}%</span>
-                  )}
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Assembly & Delivery Section */}
+            <section className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                  <Truck className="w-5 h-5 text-blue-600" />
                 </div>
-                <input 
-                  type="number" 
-                  value={assemblyPercentage}
-                  onChange={(e) => setAssemblyPercentage(parseFloat(e.target.value) || 0)}
-                  disabled={!canEditAssembly}
-                  className={cn(
-                    "w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none",
-                    !canEditAssembly && "bg-gray-100 text-gray-500 cursor-not-allowed"
-                  )}
-                />
-              </div>
-              
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
                 <div>
-                  <span className="font-bold text-gray-700 block">Базовая стоимость доставки (₽)</span>
-                  <span className="text-xs text-gray-500">Минимальная стоимость машины</span>
-                  {productionFormat === 'contract' && productionSettings?.general?.deliveryTariffs?.basePrice !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">Цена производства: {productionSettings.general.deliveryTariffs.basePrice} ₽</span>
-                  )}
+                  <h3 className="text-lg font-black text-gray-900 leading-none">Сборка и доставка</h3>
+                  <p className="text-xs text-gray-400 font-medium mt-1">Настройка тарифов на услуги сервиса</p>
                 </div>
-                <input 
-                  type="number" 
-                  value={deliveryTariffs.basePrice}
-                  onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, basePrice: parseFloat(e.target.value) || 0 }))}
-                  disabled={!canEditDelivery}
-                  className={cn(
-                    "w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none",
-                    !canEditDelivery && "bg-gray-100 text-gray-500 cursor-not-allowed"
-                  )}
-                />
               </div>
 
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Базовое расстояние (км)</span>
-                  <span className="text-xs text-gray-500">Включено в минимальную стоимость</span>
-                  {isContract && prodGen?.deliveryTariffs?.baseDistance !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">У производства: {prodGen.deliveryTariffs.baseDistance} км</span>
-                  )}
-                </div>
-                <input 
-                  type="number" 
-                  value={deliveryTariffs.baseDistance}
-                  onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, baseDistance: parseFloat(e.target.value) || 0 }))}
-                  className="w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Delivery & Loading */}
+                <div className="space-y-4">
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Тарифы на доставку</label>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-bold text-gray-600 block ml-1">Минимальная (₽)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.basePrice}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, basePrice: parseInt(e.target.value) || 0 }))}
+                          className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-bold text-gray-600 block ml-1">Бесплатно (км)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.baseDistance}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, baseDistance: parseInt(e.target.value) || 0 }))}
+                          className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                        />
+                      </div>
+                    </div>
 
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Доплата за перепробег (₽/км)</span>
-                  <span className="text-xs text-gray-500">Свыше базового расстояния</span>
-                  {isContract && prodGen?.deliveryTariffs?.extraKmPrice !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">Цена производства: {prodGen.deliveryTariffs.extraKmPrice} ₽</span>
-                  )}
-                </div>
-                <input 
-                  type="number" 
-                  value={deliveryTariffs.extraKmPrice}
-                  onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraKmPrice: parseFloat(e.target.value) || 0 }))}
-                  className="w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-bold text-gray-600 block ml-1">Цена за км (₽/км)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.extraKmPrice}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraKmPrice: parseInt(e.target.value) || 0 }))}
+                          className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-bold text-gray-600 block ml-1">Доп. грузчик (₽)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.extraLoaderPrice}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraLoaderPrice: parseInt(e.target.value) || 0 }))}
+                          className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Базовый объем (м²)</span>
-                  <span className="text-xs text-gray-500">Включено в минимальную стоимость</span>
-                  {isContract && prodGen?.deliveryTariffs?.baseVolume !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">У производства: {prodGen.deliveryTariffs.baseVolume} м²</span>
-                  )}
+                  <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 space-y-4">
+                    <label className="block text-[10px] font-black text-blue-400 uppercase tracking-widest">Разгрузка и подъем</label>
+                    
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs font-bold text-blue-800">Базовый подъем (₽)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.loadingBase}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, loadingBase: parseInt(e.target.value) || 0 }))}
+                          className="w-24 px-3 py-1.5 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-right"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs font-bold text-blue-800">Этаж без лифта (₽/эт)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.floorPrice}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, floorPrice: parseInt(e.target.value) || 0 }))}
+                          className="w-24 px-3 py-1.5 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-right"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs font-bold text-blue-800">С лифтом (фикс ₽)</span>
+                        <input 
+                          type="number"
+                          value={deliveryTariffs.elevatorPrice}
+                          onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, elevatorPrice: parseInt(e.target.value) || 0 }))}
+                          className="w-24 px-3 py-1.5 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-right"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <input 
-                  type="number" 
-                  value={deliveryTariffs.baseVolume}
-                  onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, baseVolume: parseFloat(e.target.value) || 0 }))}
-                  className="w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
 
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Доплата за перегруз (₽/м²)</span>
-                  <span className="text-xs text-gray-500">Свыше базового объема</span>
-                  {isContract && prodGen?.deliveryTariffs?.extraVolumePrice !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">Цена производства: {prodGen.deliveryTariffs.extraVolumePrice} ₽</span>
-                  )}
-                </div>
-                <input 
-                  type="number" 
-                  value={deliveryTariffs.extraVolumePrice}
-                  onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraVolumePrice: parseFloat(e.target.value) || 0 }))}
-                  className="w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+                {/* Assembly & Hardware */}
+                <div className="space-y-4">
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Сборка и метизы</label>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-bold text-gray-700">Процент на сборку</span>
+                          <span className="text-lg font-black text-blue-600">{assemblyPercentage}%</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="0"
+                          max="30"
+                          step="1"
+                          value={assemblyPercentage}
+                          onChange={(e) => setAssemblyPercentage(parseInt(e.target.value))}
+                          className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                        />
+                      </div>
 
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Дополнительный грузчик (₽)</span>
-                  <span className="text-xs text-gray-500">Стоимость 1 грузчика</span>
-                  {isContract && prodGen?.deliveryTariffs?.extraLoaderPrice !== undefined && (
-                    <span className="text-[10px] text-blue-600 block font-medium">Цена производства: {prodGen.deliveryTariffs.extraLoaderPrice} ₽</span>
-                  )}
-                </div>
-                <input 
-                  type="number" 
-                  value={deliveryTariffs.extraLoaderPrice}
-                  onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraLoaderPrice: parseFloat(e.target.value) || 0 }))}
-                  className="w-24 p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+                      <div className="pt-4 border-t border-gray-200">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-3">Комплект метизов (на лист)</span>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-gray-500 block ml-1 uppercase">Розница (₽)</span>
+                            <input 
+                              type="number"
+                              value={hardwareKitPrice.retail}
+                              onChange={(e) => setHardwareKitPrice(prev => ({ ...prev, retail: parseInt(e.target.value) || 0 }))}
+                              className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-gray-500 block ml-1 uppercase">Дизайнер (₽)</span>
+                            <input 
+                              type="number"
+                              value={hardwareKitPrice.designer || 0}
+                              onChange={(e) => setHardwareKitPrice(prev => ({ ...prev, designer: parseInt(e.target.value) || 0 }))}
+                              className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <span className="font-bold text-gray-700 block">Ссылка на карты</span>
-                  <span className="text-xs text-gray-500">Для расчета километража</span>
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between gap-4">
+                    <div className="flex-1">
+                      <span className="font-bold text-gray-700 block text-sm">Ссылка на карты</span>
+                      <span className="text-[10px] text-gray-400">Для расчета логистики в сервисе</span>
+                    </div>
+                    <input 
+                      type="text" 
+                      value={mapLink}
+                      onChange={(e) => setMapLink(e.target.value)}
+                      className="w-48 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none truncate"
+                    />
+                  </div>
                 </div>
-                <input 
-                  type="text" 
-                  value={mapLink}
-                  onChange={(e) => setMapLink(e.target.value)}
-                  className="w-64 p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                />
               </div>
-            </div>
-          </section>
+            </section>
+          </div>
         )}
-
         {isProduction && (
           <div className="pt-8 border-t border-gray-100 font-sans space-y-8">
             <section>
@@ -3082,10 +3615,6 @@ const SettingsView = ({
                       { id: 'facadeSheet', label: 'Фасад (плита)', baseId: 'facadeSheet' },
                       { id: 'facadeCustom', label: 'Фасад (заказной)', baseId: 'facadeCustom' },
                       { id: 'hardware', label: 'Фурнитура', baseId: 'hardware' },
-                      { id: 'hardwareKit', label: 'Комплект метизов (₽)', isPrice: true },
-                      { id: 'assemblyPercentage', label: 'Процент сборки (%)', isRate: true },
-                      { id: 'deliveryBase', label: 'Доставка (база ₽)', isPrice: true },
-                      { id: 'deliveryKm', label: 'Доставка (₽/км)', isPrice: true },
                       ...productCategories.map(cat => ({ id: `cat_${cat}`, label: cat, isProduct: true, catName: cat }))
                     ].map((row: any, idx) => (
                       <tr key={row.id} className={cn(
@@ -3110,22 +3639,14 @@ const SettingsView = ({
                         <td className="py-1.5 px-4 border-l border-gray-50">
                           <input 
                             type="number"
-                            step={row.isPrice || row.isRate ? "1" : "0.01"}
+                            step="0.01"
                             value={
                               row.isProduct ? (coefficients.retail.products?.[row.catName!] || 1.5) : 
-                              row.id === 'hardwareKit' ? hardwareKitPrice.retail :
-                              row.id === 'assemblyPercentage' ? assemblyPercentage :
-                              row.id === 'deliveryBase' ? deliveryTariffs.basePrice :
-                              row.id === 'deliveryKm' ? deliveryTariffs.extraKmPrice :
                               (coefficients.retail[row.baseId!] || 1.5)
                             }
                             onChange={(e) => {
                               const v = parseFloat(e.target.value) || 0;
                               if (row.isProduct) updateProductCoeff('retail', row.catName!, v);
-                              else if (row.id === 'hardwareKit') setHardwareKitPrice(prev => ({ ...prev, retail: v }));
-                              else if (row.id === 'assemblyPercentage') setAssemblyPercentage(v);
-                              else if (row.id === 'deliveryBase') setDeliveryTariffs(prev => ({ ...prev, basePrice: v }));
-                              else if (row.id === 'deliveryKm') setDeliveryTariffs(prev => ({ ...prev, extraKmPrice: v }));
                               else updateCoeff('retail', row.baseId!, v);
                             }}
                             className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold focus:ring-1 focus:ring-blue-500 outline-none text-right"
@@ -3136,22 +3657,14 @@ const SettingsView = ({
                         <td className="py-1.5 px-4 border-l border-gray-50">
                           <input 
                             type="number"
-                            step={row.isPrice || row.isRate ? "1" : "0.01"}
+                            step="0.01"
                             value={
                               row.isProduct ? (coefficients.designer.products?.[row.catName!] || 1.5) : 
-                              row.id === 'hardwareKit' ? hardwareKitPrice.designer :
-                              row.id === 'assemblyPercentage' ? assemblyPercentage :
-                              row.id === 'deliveryBase' ? deliveryTariffs.basePrice :
-                              row.id === 'deliveryKm' ? deliveryTariffs.extraKmPrice :
                               (coefficients.designer[row.baseId!] || 1.5)
                             }
                             onChange={(e) => {
                               const v = parseFloat(e.target.value) || 0;
                               if (row.isProduct) updateProductCoeff('designer', row.catName!, v);
-                              else if (row.id === 'hardwareKit') setHardwareKitPrice(prev => ({ ...prev, designer: v }));
-                              else if (row.id === 'assemblyPercentage') setAssemblyPercentage(v);
-                              else if (row.id === 'deliveryBase') setDeliveryTariffs(prev => ({ ...prev, basePrice: v }));
-                              else if (row.id === 'deliveryKm') setDeliveryTariffs(prev => ({ ...prev, extraKmPrice: v }));
                               else updateCoeff('designer', row.baseId!, v);
                             }}
                             className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold focus:ring-1 focus:ring-blue-500 outline-none text-right"
@@ -3163,18 +3676,13 @@ const SettingsView = ({
                           <div className="relative">
                             <input 
                               type="number"
-                              step={row.isPrice || row.isRate ? "1" : "0.01"}
+                              step="0.01"
                               value={
-                                row.id === 'hardwareKit' ? hardwareKitPrice.wholesale :
-                                row.id === 'assemblyPercentage' ? ((ownProductionConfig as any).standardCoefficients?.assemblyPercentage ?? assemblyPercentage) :
-                                row.id === 'deliveryBase' ? ((ownProductionConfig as any).standardCoefficients?.deliveryBase ?? deliveryTariffs.basePrice) :
-                                row.id === 'deliveryKm' ? ((ownProductionConfig as any).standardCoefficients?.deliveryKm ?? deliveryTariffs.extraKmPrice) :
                                 ((ownProductionConfig as any).standardCoefficients?.[row.id] ?? 1.5)
                               }
                               onChange={(e) => {
                                 const v = e.target.value;
-                                if (row.id === 'hardwareKit') setHardwareKitPrice(prev => ({ ...prev, wholesale: parseFloat(v) || 0 }));
-                                else updateStandardCoefficient(row.id, v);
+                                updateStandardCoefficient(row.id, v);
                               }}
                               className="w-full px-2 py-1 border border-blue-100 rounded-lg text-xs font-bold bg-white focus:ring-1 focus:ring-blue-500 outline-none text-right"
                             />
@@ -3185,21 +3693,13 @@ const SettingsView = ({
                           <td key={salon.id} className="py-1.5 px-4 border-l border-gray-50">
                             <input 
                               type="number"
-                              step={row.isPrice || row.isRate ? "1" : "0.01"}
+                              step="0.01"
                               value={
-                                row.id === 'hardwareKit' ? (ownProductionConfig.salonCoefficients?.[salon.id]?.hardwareKit ?? (row.id === 'hardwareKit' ? hardwareKitPrice.wholesale : 1.5)) :
-                                row.id === 'assemblyPercentage' ? (ownProductionConfig.salonCoefficients?.[salon.id]?.assemblyPercentage ?? (ownProductionConfig.standardCoefficients?.assemblyPercentage ?? assemblyPercentage)) :
-                                row.id === 'deliveryBase' ? (ownProductionConfig.salonCoefficients?.[salon.id]?.deliveryBase ?? (ownProductionConfig.standardCoefficients?.deliveryBase ?? deliveryTariffs.basePrice)) :
-                                row.id === 'deliveryKm' ? (ownProductionConfig.salonCoefficients?.[salon.id]?.deliveryKm ?? (ownProductionConfig.standardCoefficients?.deliveryKm ?? deliveryTariffs.extraKmPrice)) :
                                 (ownProductionConfig.salonCoefficients?.[salon.id]?.[row.id] ?? (ownProductionConfig.standardCoefficients?.[row.id] ?? 1.5))
                               }
                               onChange={(e) => {
                                 const v = e.target.value;
-                                if (row.id === 'hardwareKit') updateSalonCoefficient(salon.id, 'hardwareKit', v);
-                                else if (row.id === 'assemblyPercentage') updateSalonCoefficient(salon.id, 'assemblyPercentage', v);
-                                else if (row.id === 'deliveryBase') updateSalonCoefficient(salon.id, 'deliveryBase', v);
-                                else if (row.id === 'deliveryKm') updateSalonCoefficient(salon.id, 'deliveryKm', v);
-                                else updateSalonCoefficient(salon.id, row.id, v);
+                                updateSalonCoefficient(salon.id, row.id, v);
                               }}
                               className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold focus:ring-1 focus:ring-blue-500 outline-none text-right"
                             />
@@ -3213,6 +3713,219 @@ const SettingsView = ({
             </section>
           </div>
         )}
+
+        {/* Company Info Section */}
+        <section className="pt-8 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Данные компании</h3>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="space-y-4 lg:col-span-1">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Основная информация</label>
+                <div className="space-y-3">
+                    <input 
+                    type="text"
+                    placeholder="Наименование компании"
+                    value={companyInfo.name}
+                    onChange={(e) => setCompanyInfo({ ...companyInfo, name: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-900 placeholder:text-gray-300 transition-all text-sm"
+                  />
+                  
+                  <textarea 
+                    placeholder="Юридический адрес"
+                    value={companyInfo.legalAddress || ''}
+                    rows={3}
+                    onChange={(e) => setCompanyInfo({ ...companyInfo, legalAddress: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-900 text-sm placeholder:text-gray-300 resize-none"
+                  />
+                  
+                  <input 
+                    type="tel"
+                    placeholder="+7 (___) ___-__-__"
+                    value={companyInfo.phone || ''}
+                    onChange={(e) => setCompanyInfo({ ...companyInfo, phone: formatPhoneNumber(e.target.value) })}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-900 text-sm placeholder:text-gray-300"
+                  />
+                  
+                  <div className="flex gap-2">
+                    {['ИП', 'ООО'].map(form => (
+                      <button
+                        key={form}
+                        onClick={() => setCompanyInfo({ ...companyInfo, legalForm: form })}
+                        className={cn(
+                          "flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all border uppercase tracking-widest",
+                          companyInfo.legalForm === form 
+                            ? "bg-gray-900 text-white border-gray-900 shadow-lg shadow-gray-200" 
+                            : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"
+                        )}
+                      >
+                        {form}
+                      </button>
+                    ))}
+                  </div>
+
+                  {companyInfo.legalForm === 'ООО' && (
+                    <input 
+                      type="text"
+                      placeholder="Генеральный директор"
+                      value={companyInfo.director}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, director: e.target.value })}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                    />
+                  )}
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-gray-300 uppercase">ИНН</span>
+                      <input 
+                        type="text"
+                        value={companyInfo.inn}
+                        onChange={(e) => setCompanyInfo({ ...companyInfo, inn: e.target.value })}
+                        className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
+                      />
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-gray-300 uppercase">
+                        {companyInfo.legalForm === 'ИП' ? 'ОГРНИП' : 'ОГРН'}
+                      </span>
+                      <input 
+                        type="text"
+                        value={companyInfo.ogrn}
+                        onChange={(e) => setCompanyInfo({ ...companyInfo, ogrn: e.target.value })}
+                        className="w-full pl-20 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 lg:col-span-1">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Налогообложение</label>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
+                      <span className="block text-xs font-bold text-gray-500 mb-1.5 ml-1">Система</span>
+                      <select
+                        value={companyInfo.taxSystem}
+                        onChange={(e) => setCompanyInfo({ ...companyInfo, taxSystem: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-sm font-bold"
+                      >
+                        <option value="ОСНО">ОСНО (НДС 20%)</option>
+                        <option value="УСН Доходы">УСН Доходы</option>
+                        <option value="УСН Доходы-расходы">УСН Доходы-расходы</option>
+                        <option value="Патент">Патент</option>
+                        <option value="НПД">НПД (Самозанятый)</option>
+                      </select>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <span className="block text-xs font-bold text-gray-500 mb-1.5 ml-1">Ставка %</span>
+                        <input 
+                          type="number"
+                          value={companyInfo.taxRate}
+                          onChange={(e) => setCompanyInfo({ ...companyInfo, taxRate: parseFloat(e.target.value) || 0 })}
+                          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
+                        />
+                      </div>
+                      <div>
+                        <span className="block text-xs font-bold text-gray-500 mb-1.5 ml-1">НДС %</span>
+                        <select
+                          value={companyInfo.vat}
+                          onChange={(e) => setCompanyInfo({ ...companyInfo, vat: parseInt(e.target.value) })}
+                          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-sm font-bold"
+                        >
+                          <option value="0">0%</option>
+                          <option value="5">5%</option>
+                          <option value="7">7%</option>
+                          <option value="20">20%</option>
+                          <option value="22">22%</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Контакты</label>
+                    <div className="relative">
+                      <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                      <input 
+                        type="text"
+                        placeholder="Сайт"
+                        value={companyInfo.website}
+                        onChange={(e) => setCompanyInfo({ ...companyInfo, website: e.target.value })}
+                        className="w-full pl-10 pr-4 py-2 bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <input 
+                        type="text"
+                        placeholder="VK"
+                        value={companyInfo.socials?.vk}
+                        onChange={(e) => setCompanyInfo({ ...companyInfo, socials: { ...companyInfo.socials, vk: e.target.value } })}
+                        className="w-full px-2 py-2 bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs"
+                      />
+                      <input 
+                        type="text"
+                        placeholder="Telegram"
+                        value={companyInfo.socials?.telegram}
+                        onChange={(e) => setCompanyInfo({ ...companyInfo, socials: { ...companyInfo.socials, telegram: e.target.value } })}
+                        className="w-full px-2 py-2 bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 lg:col-span-1">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Банковские реквизиты</label>
+                <div className="space-y-3">
+                  <input 
+                    type="text"
+                    placeholder="Наименование банка"
+                    value={companyInfo.bankName}
+                    onChange={(e) => setCompanyInfo({ ...companyInfo, bankName: e.target.value })}
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm placeholder:text-gray-300"
+                  />
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-gray-300">БИК</span>
+                    <input 
+                      type="text"
+                      value={companyInfo.bik}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, bik: e.target.value })}
+                      className="w-full pl-12 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
+                    />
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-gray-300 uppercase">Р/С</span>
+                    <input 
+                      type="text"
+                      placeholder="Расчетный счет"
+                      value={companyInfo.rs}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, rs: e.target.value })}
+                      className="w-full pl-12 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
+                    />
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-gray-300 uppercase">К/С</span>
+                    <input 
+                      type="text"
+                      placeholder="Корр. счет"
+                      value={companyInfo.ks}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, ks: e.target.value })}
+                      className="w-full pl-12 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
         <div className="pt-6 border-t border-gray-100 flex justify-end">
           <button
@@ -3732,7 +4445,12 @@ const ProductsView = ({
   onSaveProduct,
   onDeleteProduct,
   userRole,
-  companyType
+  companyType,
+  furnitureType,
+  setFurnitureType,
+  checklistRefused,
+  setChecklistRefused,
+  addedProducts
 }: { 
   onAddProduct: (product: any, qty: number) => void;
   catalogProducts: any[];
@@ -3744,22 +4462,70 @@ const ProductsView = ({
   onDeleteProduct: (id: string | number) => void;
   userRole?: string | null;
   companyType?: string;
+  furnitureType?: string;
+  setFurnitureType?: (t: string) => void;
+  checklistRefused?: Record<string, boolean>;
+  setChecklistRefused?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  addedProducts?: any[];
 }) => {
+  const [showChecklistWindow, setShowChecklistWindow] = useState(false);
+  
+  // Function to determine if an item is present
+  const isItemPresent = (itemName: string) => {
+    if (!addedProducts) return false;
+    const lowerItemName = itemName.toLowerCase();
+    // Simplified logic for ProductsView: just check if any added product name matches
+    // Note: To be fully accurate, we might need more context, but this covers explicit products
+    return addedProducts.some(p => {
+      const prodName = (p.name || '').toLowerCase();
+      return prodName.includes(lowerItemName);
+    });
+  };
+
+  const currentChecklist = furnitureType && furnitureType in FURNITURE_CHECKLISTS ? FURNITURE_CHECKLISTS[furnitureType as FurnitureType] : null;
+
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [quantities, setQuantities] = useState<Record<number, number>>({});
-  const [newProduct, setNewProduct] = useState({ name: '', category: productCategories[0], purchasePrice: 0, image: '' });
-  const [newCategory, setNewCategory] = useState('');
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<any>(null);
+  
+  const [newProduct, setNewProduct] = useState({ 
+    name: '', 
+    category: productCategories[0], 
+    purchasePrice: 0, 
+    images: [] as string[],
+    article: '',
+    vendorArticle: '',
+    manufacturerArticle: '',
+    vat: 20,
+    includeVat: true,
+    color: '',
+    description: '',
+    unit: 'шт'
+  });
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewProduct(prev => ({ ...prev, image: reader.result as string }));
-      };
-      reader.readAsDataURL(file);
+    const files = e.target.files;
+    if (files) {
+      Array.from(files).forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setNewProduct(prev => ({ 
+            ...prev, 
+            images: [...prev.images, reader.result as string] 
+          }));
+        };
+        reader.readAsDataURL(file);
+      });
     }
+  };
+
+  const removeImage = (index: number) => {
+    setNewProduct(prev => ({
+      ...prev,
+      images: prev.images.filter((_, i) => i !== index)
+    }));
   };
 
   const handleAdd = (product: any) => {
@@ -3769,145 +4535,213 @@ const ProductsView = ({
   };
 
   const handleCreateProduct = () => {
-    if (!newProduct.name || newProduct.purchasePrice <= 0) return;
+    if (!newProduct.name || newProduct.purchasePrice < 0) return;
     const coeff = coefficients.products?.[newProduct.category] || 1.5;
     const finalPrice = newProduct.purchasePrice * coeff;
+    
     const product = {
-      id: Date.now().toString(),
-      name: newProduct.name,
-      category: newProduct.category,
+      ...newProduct,
+      id: editingProduct?.id || Date.now().toString(),
       price: finalPrice,
-      purchasePrice: newProduct.purchasePrice,
-      description: 'Пользовательский товар',
-      image: newProduct.image || ""
+      image: newProduct.images[0] || "", // Keep for legacy compatibility
+      updatedAt: new Date().toISOString()
     };
+
     onSaveProduct(product);
-    setNewProduct({ name: '', category: productCategories[0], purchasePrice: 0, image: '' });
+    resetForm();
+  };
+
+  const resetForm = () => {
+    setNewProduct({ 
+      name: '', 
+      category: productCategories[0], 
+      purchasePrice: 0, 
+      images: [],
+      article: '',
+      vendorArticle: '',
+      manufacturerArticle: '',
+      vat: 20,
+      includeVat: true,
+      color: '',
+      description: '',
+      unit: 'шт'
+    });
+    setEditingProduct(null);
+    setIsAddingProduct(false);
+  };
+
+  const handleEditProduct = (product: any) => {
+    setEditingProduct(product);
+    setNewProduct({
+      name: product.name || '',
+      category: product.category || productCategories[0],
+      purchasePrice: product.purchasePrice || 0,
+      images: product.images || (product.image ? [product.image] : []),
+      article: product.article || '',
+      vendorArticle: product.vendorArticle || '',
+      manufacturerArticle: product.manufacturerArticle || '',
+      vat: product.vat || 20,
+      includeVat: product.includeVat ?? true,
+      color: product.color || '',
+      description: product.description || '',
+      unit: product.unit || 'шт'
+    });
+    setIsAddingProduct(true);
   };
 
   const handleDeleteProduct = (id: string | number) => {
     onDeleteProduct(id);
   };
 
-  const handleAddCategory = () => {
-    if (newCategory.trim() && !productCategories.includes(newCategory.trim())) {
-      setProductCategories(prev => [...prev, newCategory.trim()]);
-      setNewProduct(prev => ({ ...prev, category: newCategory.trim() }));
-      setNewCategory('');
-    }
-  };
-
   const filteredProducts = catalogProducts.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || 
-                         p.description.toLowerCase().includes(search.toLowerCase());
+    const nameMatch = (p.name?.toLowerCase() || '').includes(search.toLowerCase());
+    const descMatch = (p.description?.toLowerCase() || '').includes(search.toLowerCase());
+    const articleMatch = (p.article?.toLowerCase() || '').includes(search.toLowerCase());
+    const matchesSearch = nameMatch || descMatch || articleMatch;
     const matchesCategory = !selectedCategory || p.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {currentChecklist && !showChecklistWindow && (
+        <button
+          onClick={() => setShowChecklistWindow(true)}
+          className="fixed right-6 bottom-24 z-50 flex items-center justify-center p-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full shadow-lg shadow-blue-500/30 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 animate-in slide-in-from-right-8 group"
+        >
+          <ClipboardList className="w-6 h-6 flex-shrink-0" />
+          <span className="font-bold text-sm transition-all duration-300 overflow-hidden max-w-0 group-hover:max-w-[150px] group-hover:ml-2 opacity-0 group-hover:opacity-100 whitespace-nowrap">
+            Чек-лист
+          </span>
+          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+          </span>
+        </button>
+      )}
+
+      {showChecklistWindow && currentChecklist && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-end p-4 sm:p-6 pb-20 sm:pb-6 bg-black/20 backdrop-blur-sm pointer-events-auto" onClick={(e) => e.target === e.currentTarget && setShowChecklistWindow(false)}>
+          <div className="w-full max-w-sm h-full max-h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right-8 duration-300">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-white relative z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 leading-tight">Чек-лист продаж</h3>
+                  <p className="text-xs text-gray-500">{furnitureType}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowChecklistWindow(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-5 pb-10 space-y-6">
+              <p className="text-sm text-gray-500 mb-2">Проверьте, не забыли ли вы предложить клиенту следующие позиции:</p>
+              
+              {currentChecklist.map((group, gIdx) => (
+                <div key={gIdx} className="space-y-2">
+                  <div className="h-px w-full bg-gradient-to-r from-gray-200 to-transparent mb-3" />
+                  {group.items.map((item, idx) => {
+                    const isRefused = checklistRefused?.[`${furnitureType}_${item}`];
+                    const isPresent = isItemPresent(item);
+                    
+                    return (
+                      <div key={idx} className={cn(
+                        "flex items-center justify-between p-3 rounded-xl border transition-all group",
+                        isRefused ? "bg-gray-50/50 border-gray-100 opacity-60" :
+                        isPresent ? "bg-green-50/50 border-green-200" : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-sm"
+                      )}>
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={cn(
+                            "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-colors",
+                            isRefused ? "bg-gray-200 text-gray-500" :
+                            isPresent ? "bg-green-500 text-white" : "bg-gray-100 text-gray-400"
+                          )}>
+                            {isRefused ? <UserX className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                          </div>
+                          <span className={cn(
+                            "text-sm font-medium truncate",
+                            isRefused ? "text-gray-400 line-through" :
+                            isPresent ? "text-green-800" : "text-gray-700"
+                          )}>
+                            {item}
+                          </span>
+                        </div>
+                        
+                        {!isPresent && !isRefused && setChecklistRefused && (
+                          <button
+                            onClick={() => setChecklistRefused(prev => ({...prev, [`${furnitureType}_${item}`]: true}))}
+                            className="opacity-0 group-hover:opacity-100 ml-2 px-2 py-1 text-[10px] font-bold tracking-wider uppercase bg-gray-100 hover:bg-red-50 text-gray-500 hover:text-red-600 rounded flex-shrink-0 transition-all"
+                            title="Клиенту не надо"
+                          >
+                            Отказ
+                          </button>
+                        )}
+                        
+                        {isRefused && setChecklistRefused && (
+                          <button
+                            onClick={() => {
+                              if (!checklistRefused) return;
+                              const newRefused = { ...checklistRefused };
+                              delete newRefused[`${furnitureType}_${item}`];
+                              setChecklistRefused(newRefused);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 ml-2 px-2 py-1 text-[10px] font-bold tracking-wider uppercase text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded flex-shrink-0 transition-all"
+                            title="Вернуть в список"
+                          >
+                            Вернуть
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Товары</h2>
-          <p className="text-sm text-gray-500">Выберите фурнитуру и аксессуары для проекта</p>
+          <h2 className="text-2xl font-bold text-gray-800">Каталог товаров</h2>
+          <p className="text-sm text-gray-500">Управление фурнитурой и аксессуарами</p>
         </div>
-        <div className="relative w-full md:w-96">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-          <input 
-            type="text" 
-            placeholder="Поиск по названию или описанию..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-          />
-        </div>
-      </div>
-
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm mb-8">
-        <h3 className="font-bold text-gray-800 mb-4">Добавить свой товар в каталог</h3>
-        <div className="flex flex-col md:flex-row gap-4 flex-wrap">
-          <input 
-            type="text" 
-            placeholder="Название товара"
-            value={newProduct.name}
-            onChange={e => setNewProduct(prev => ({ ...prev, name: e.target.value }))}
-            className="flex-1 min-w-[200px] px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-          />
-          <select
-            value={newProduct.category}
-            onChange={e => setNewProduct(prev => ({ ...prev, category: e.target.value }))}
-            className="px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-          >
-            {productCategories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row w-full md:w-auto gap-3">
+          <div className="relative w-full md:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input 
-              type="number" 
-              placeholder="Закупочная цена"
-              value={newProduct.purchasePrice || ''}
-              onChange={e => setNewProduct(prev => ({ ...prev, purchasePrice: parseFloat(e.target.value) || 0 }))}
-              className="w-32 px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+              type="text" 
+              placeholder="Поиск ..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full h-10 pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm"
             />
-            <span className="font-bold text-gray-500">₽</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="cursor-pointer px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-sm text-gray-600 flex items-center gap-2">
-              <Package className="w-4 h-4" />
-              {newProduct.image ? 'Фото выбрано' : 'Загрузить фото'}
-              <input 
-                type="file" 
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-            </label>
           </div>
           <button 
-            onClick={handleCreateProduct}
-            disabled={!newProduct.name || newProduct.purchasePrice <= 0}
-            className="px-6 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:bg-gray-300 transition-colors"
+            onClick={() => setIsAddingProduct(true)}
+            className="flex items-center justify-center gap-2 px-6 h-10 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
           >
-            Добавить
+            <Plus className="w-5 h-5" />
+            Добавить товар
           </button>
-        </div>
-        {newProduct.purchasePrice > 0 && productionFormat === 'own' && (
-          <div className="mt-4 text-sm text-gray-500 bg-gray-50 p-3 rounded-lg border border-gray-100">
-            Коэффициент категории "{newProduct.category}": <span className="font-bold">{coefficients.products?.[newProduct.category] || 1.5}</span>
-            <br />
-            Итоговая цена для клиента: <span className="font-bold text-blue-600">{(newProduct.purchasePrice * (coefficients.products?.[newProduct.category] || 1.5)).toLocaleString()} ₽</span>
-          </div>
-        )}
-        
-        <div className="mt-4 pt-4 border-t border-gray-100">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Добавить новую категорию</label>
-          <div className="flex gap-2">
-            <input 
-              type="text"
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              className="w-full max-w-xs px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-              placeholder="Название категории"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleAddCategory();
-              }}
-            />
-            <button
-              onClick={handleAddCategory}
-              disabled={!newCategory.trim()}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 disabled:opacity-50 transition-colors"
-            >
-              Добавить
-            </button>
-          </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-8">
+      {/* Categories Filter */}
+      <div className="flex flex-wrap items-center gap-2 mb-8">
         <button 
           onClick={() => setSelectedCategory(null)}
           className={cn(
             "px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all",
-            !selectedCategory ? "bg-blue-600 text-white shadow-md" : "bg-white text-gray-600 border border-gray-200 hover:border-blue-300"
+            !selectedCategory ? "bg-blue-600 text-white shadow-md shadow-blue-100" : "bg-white text-gray-600 border border-gray-200 hover:border-blue-300"
           )}
         >
           Все категории
@@ -3918,102 +4752,355 @@ const ProductsView = ({
             onClick={() => setSelectedCategory(cat)}
             className={cn(
               "px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all",
-              selectedCategory === cat ? "bg-blue-600 text-white shadow-md" : "bg-white text-gray-600 border border-gray-200 hover:border-blue-300"
+              selectedCategory === cat ? "bg-blue-600 text-white shadow-md shadow-blue-100" : "bg-white text-gray-600 border border-gray-200 hover:border-blue-300"
             )}
           >
             {cat}
           </button>
         ))}
+        {userRole === 'admin' && (
+          <button
+            onClick={() => {
+              const newCat = window.prompt('Введите название новой категории:');
+              if (newCat && newCat.trim() && !productCategories.includes(newCat.trim())) {
+                setProductCategories(prev => [...prev, newCat.trim()]);
+                // Automatically save it via admin settings hook if required, 
+                // but since we are modifying state it will persist when we save products or we need direct API call ?
+                // The prompt requested 'нет возможности создать категорию товаров', this gives quick add mechanism.
+              }
+            }}
+            className="w-9 h-9 flex items-center justify-center rounded-full border border-dashed border-gray-300 text-gray-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-all ml-1"
+            title="Добавить категорию"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
+      {/* Product Modal */}
+      {isAddingProduct && (
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="sticky top-0 bg-white z-10 p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">{editingProduct ? 'Редактировать товар' : 'Новый товар'}</h3>
+                <p className="text-sm text-gray-500">Заполните данные о товаре для каталога</p>
+              </div>
+              <button onClick={resetForm} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-400">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-8">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                {/* Left Side: Basic Info */}
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Название товара</label>
+                    <input 
+                      type="text" 
+                      value={newProduct.name}
+                      onChange={e => setNewProduct(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                      placeholder="Например: Петля Blum Clip Top"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Категория</label>
+                      <select
+                        value={newProduct.category}
+                        onChange={e => setNewProduct(prev => ({ ...prev, category: e.target.value }))}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                      >
+                        {productCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Ед. измерения</label>
+                      <select
+                        value={newProduct.unit}
+                        onChange={e => setNewProduct(prev => ({ ...prev, unit: e.target.value }))}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                      >
+                        <option value="шт">Шт</option>
+                        <option value="компл">Комплект</option>
+                        <option value="м.п.">М.п.</option>
+                        <option value="упак">Упаковка</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Артикул</label>
+                      <input 
+                        type="text" 
+                        value={newProduct.article}
+                        onChange={e => setNewProduct(prev => ({ ...prev, article: e.target.value }))}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                        placeholder="Внутренний артикул"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-bold text-gray-700 mb-2">Арт. поставщика</label>
+                        <input 
+                          type="text" 
+                          value={newProduct.vendorArticle}
+                          onChange={e => setNewProduct(prev => ({ ...prev, vendorArticle: e.target.value }))}
+                          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-gray-700 mb-2">Арт. производителя</label>
+                        <input 
+                          type="text" 
+                          value={newProduct.manufacturerArticle}
+                          onChange={e => setNewProduct(prev => ({ ...prev, manufacturerArticle: e.target.value }))}
+                          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-5 bg-blue-50/50 border border-blue-100 rounded-2xl space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-bold text-blue-900">Закупочная цена (без НДС)</label>
+                      <div className="relative w-32">
+                        <input 
+                          type="number" 
+                          value={newProduct.purchasePrice || ''}
+                          onChange={e => setNewProduct(prev => ({ ...prev, purchasePrice: parseFloat(e.target.value) || 0 }))}
+                          className="w-full pl-4 pr-10 py-2 border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold text-blue-700"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 font-bold">₽</span>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 border-t border-blue-100 pt-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-blue-600 font-bold uppercase">НДС (%)</span>
+                        <input 
+                          type="number" 
+                          value={newProduct.vat}
+                          onChange={e => setNewProduct(prev => ({ ...prev, vat: parseInt(e.target.value) || 0 }))}
+                          className="w-16 px-2 py-1 border border-blue-200 rounded-lg text-center font-bold text-blue-700"
+                        />
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input 
+                          type="checkbox"
+                          checked={newProduct.includeVat}
+                          onChange={e => setNewProduct(prev => ({ ...prev, includeVat: e.target.checked }))}
+                          className="w-4 h-4 text-blue-600 rounded"
+                        />
+                        <span className="text-xs text-blue-600 font-medium">НДС включен в цену</span>
+                      </label>
+                    </div>
+
+                    <div className="pt-2">
+                      <div className="flex justify-between items-center text-sm font-bold text-blue-900 mb-1">
+                        <span>Итоговая цена для клиента:</span>
+                        <span className="text-xl">
+                          {(newProduct.purchasePrice * (coefficients.products?.[newProduct.category] || 1.5)).toLocaleString()} ₽
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-blue-500 italic">
+                        * Рассчитано автоматически на основе коэффициента категории "{newProduct.category}" ({coefficients.products?.[newProduct.category] || 1.5})
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Side: Media & Details */}
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Фотографии товара</label>
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      {newProduct.images.map((img, idx) => (
+                        <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 group">
+                          <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <button 
+                            onClick={() => removeImage(idx)}
+                            className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                      {newProduct.images.length < 6 && (
+                        <label className="aspect-square rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all text-gray-400">
+                          <Upload className="w-6 h-6 mb-1" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider">Загрузить</span>
+                          <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Цвет / Декор</label>
+                    <div className="relative">
+                      <Palette className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <input 
+                        type="text" 
+                        value={newProduct.color}
+                        onChange={e => setNewProduct(prev => ({ ...prev, color: e.target.value }))}
+                        className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50"
+                        placeholder="Например: Хром матовый"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Описание товара</label>
+                    <textarea 
+                      value={newProduct.description}
+                      onChange={e => setNewProduct(prev => ({ ...prev, description: e.target.value }))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50/50 h-32 resize-none"
+                      placeholder="Характеристики, состав, особенности..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-10 pt-6 border-t border-gray-100">
+                <button 
+                  onClick={resetForm}
+                  className="px-8 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-colors"
+                >
+                  Отмена
+                </button>
+                <button 
+                  onClick={handleCreateProduct}
+                  disabled={!newProduct.name}
+                  className="px-12 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:bg-gray-300"
+                >
+                  {editingProduct ? 'Сохранить изменения' : 'Добавить в каталог'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Product List */}
       {catalogProducts.length === 0 ? (
-        <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-          Каталог товаров пуст. Добавьте свои товары выше.
+        <div className="text-center py-20 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200">
+          <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-bold text-gray-800">Каталог товаров пуст</h3>
+          <p className="text-gray-500 mb-6">Начните с добавления первого товара в вашу базу</p>
+          <button 
+            onClick={() => setIsAddingProduct(true)}
+            className="px-6 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors"
+          >
+            Добавить товар
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredProducts.map(product => (
-            <div key={product.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-xl transition-all duration-300 flex flex-col">
-              <div className="relative h-48 overflow-hidden bg-gray-50 flex items-center justify-center">
-                {product.image ? (
-                  <img 
-                    src={product.image} 
-                    alt={product.name}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center text-gray-400 w-full h-full bg-gray-50 border-b border-gray-100">
-                    <ImageIcon className="w-16 h-16 text-gray-300 mb-3" strokeWidth={1.5} />
-                    <span className="text-[13px] font-medium text-gray-400">Изображение отсутствует</span>
-                  </div>
-                )}
-                <div className="absolute top-3 left-3 flex flex-col gap-2">
-                  <span className="px-2 py-1 bg-white/90 backdrop-blur-sm text-[10px] font-bold uppercase tracking-wider text-gray-600 rounded-md shadow-sm">
-                    {product.category}
-                  </span>
-                  {product.source === 'manufacturer' && (
-                    <span className="px-2 py-1 bg-blue-600 text-white text-[10px] font-bold uppercase tracking-wider rounded-md shadow-sm">
-                      Производство
+          {filteredProducts.map(product => {
+            const displayImage = product.images?.[0] || product.image;
+            return (
+              <div key={product.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col relative">
+                <div className="relative h-56 overflow-hidden bg-gray-100 flex items-center justify-center">
+                  {displayImage ? (
+                    <img 
+                      src={displayImage} 
+                      alt={product.name}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-gray-400 w-full h-full">
+                      <ImageIcon className="w-12 h-12 text-gray-200 mb-2" strokeWidth={1.5} />
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-gray-300">Нет фото</span>
+                    </div>
+                  )}
+                  
+                  {/* Overlay Badges */}
+                  <div className="absolute top-4 left-4 flex flex-col gap-2">
+                    <span className="px-2 py-1 bg-white/95 backdrop-blur shadow-sm text-[10px] font-bold uppercase tracking-wider text-blue-600 rounded-lg">
+                      {product.category}
                     </span>
+                    {product.article && (
+                      <span className="px-2 py-1 bg-gray-900/80 backdrop-blur text-white text-[10px] font-medium tracking-tight rounded-lg">
+                        Арт: {product.article}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Quick Actions */}
+                  {product.source !== 'manufacturer' && (
+                    <div className="absolute top-4 right-4 flex flex-col gap-2 translate-x-12 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-300">
+                      <button
+                        onClick={() => handleEditProduct(product)}
+                        className="p-2 bg-white text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl shadow-lg transition-all"
+                        title="Редактировать"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteProduct(product.id)}
+                        className="p-2 bg-white text-red-500 hover:bg-red-500 hover:text-white rounded-xl shadow-lg transition-all"
+                        title="Удалить"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
-                {product.source !== 'manufacturer' && (
-                  <button
-                    onClick={() => handleDeleteProduct(product.id)}
-                    className="absolute top-3 right-3 p-1.5 bg-white/90 backdrop-blur-sm text-red-500 hover:text-red-600 hover:bg-white rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-all"
-                    title="Удалить товар"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-              <div className="p-5 flex-1 flex flex-col">
-                <h3 className="font-bold text-gray-800 mb-1 group-hover:text-blue-600 transition-colors">{product.name}</h3>
-                <p className="text-xs text-gray-500 line-clamp-2 mb-4 flex-1">{product.description}</p>
-                <div className="flex flex-col gap-3 mt-auto pt-4 border-t border-gray-50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <span className="text-lg font-bold text-gray-900">{(product.price ?? 0).toLocaleString()} ₽</span>
-                      {userRole === 'admin' && productionFormat === 'own' && product.purchasePrice && (
-                        <span className="text-[10px] text-gray-400">Закупка: {(product.purchasePrice ?? 0).toLocaleString()} ₽</span>
-                      )}
-                      {companyType === 'Дизайнер' && product.purchasePrice && (
-                        <span className="text-[10px] text-blue-600 font-bold">Цена от пр-ва: {(product.purchasePrice ?? 0).toLocaleString()} ₽</span>
-                      )}
+
+                <div className="p-6 flex-1 flex flex-col">
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <h3 className="font-bold text-gray-900 line-clamp-2 leading-snug">{product.name}</h3>
                     </div>
-                    <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-gray-50 scale-90 origin-right">
-                      <button 
-                        onClick={() => setQuantities(prev => ({ ...prev, [product.id]: Math.max(1, (prev[product.id] || 1) - 1) }))}
-                        className="p-1.5 hover:bg-gray-200 text-gray-600 transition-colors"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <input 
-                        type="number" 
-                        value={quantities[product.id] || 1}
-                        onChange={(e) => setQuantities(prev => ({ ...prev, [product.id]: parseInt(e.target.value) || 1 }))}
-                        className="w-10 text-center bg-transparent font-bold text-gray-800 outline-none text-sm"
-                      />
-                      <button 
-                        onClick={() => setQuantities(prev => ({ ...prev, [product.id]: (prev[product.id] || 1) + 1 }))}
-                        className="p-1.5 hover:bg-gray-200 text-gray-600 transition-colors"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
-                    </div>
+                    {product.color && (
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <Palette className="w-3 h-3 text-gray-400" />
+                        <span className="text-xs text-gray-500">{product.color}</span>
+                      </div>
+                    )}
                   </div>
-                  <button 
-                    onClick={() => handleAdd(product)}
-                    className="w-full py-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm font-bold text-sm flex items-center justify-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Добавить
-                  </button>
+
+                  <div className="mt-4 pt-4 border-t border-gray-50 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-xs text-gray-400 font-medium uppercase tracking-wider">Цена для клиента</span>
+                        <span className="text-xl font-black text-gray-900">{(product.price ?? 0).toLocaleString()} ₽</span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-xl">
+                        <button 
+                          onClick={() => setQuantities(prev => ({ ...prev, [product.id]: Math.max(1, (prev[product.id] || 1) - 1) }))}
+                          className="p-1 hover:bg-white rounded-lg text-gray-500 transition-all active:scale-90"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+                        <span className="w-8 text-center font-bold text-sm">{quantities[product.id] || 1}</span>
+                        <button 
+                          onClick={() => setQuantities(prev => ({ ...prev, [product.id]: (prev[product.id] || 1) + 1 }))}
+                          className="p-1 hover:bg-white rounded-lg text-gray-500 transition-all active:scale-90"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => handleAdd(product)}
+                      className="w-full py-3 bg-blue-50 text-blue-600 font-bold rounded-2xl hover:bg-blue-600 hover:text-white transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2 group/btn"
+                    >
+                      <ShoppingBag className="w-5 h-5 group-hover/btn:scale-110 transition-transform" />
+                      Добавить в проект
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -4332,7 +5419,37 @@ export default function App() {
   };
 
   const [defaultCuttingType, setDefaultCuttingType] = useState<'saw' | 'nesting'>('saw');
-  const [cuttingType, setCuttingType] = useState<'nesting' | 'saw'>(defaultCuttingType);
+  const [cuttingType, setCuttingType] = useState<'nesting' | 'saw'>('saw');
+  const [isGluingMode, setIsGluingMode] = useState(false);
+  const [selectedForGlue, setSelectedForGlue] = useState<string[]>([]);
+  const [gluedAssemblies, setGluedAssemblies] = useState<Record<string, { partIds: string[], edgeThickness: number, edgePrice: number }>>({});
+  
+  const [furnitureType, setFurnitureType] = useState<string>('');
+  const [checklistRefused, setChecklistRefused] = useState<Record<string, boolean>>({});
+
+  const [companyInfo, setCompanyInfo] = useState<any>({
+    name: '',
+    legalForm: 'ИП',
+    director: '',
+    inn: '',
+    ogrn: '',
+    taxSystem: 'УСН Доходы',
+    taxRate: 6,
+    bankName: '',
+    bik: '',
+    rs: '',
+    ks: '',
+    vat: 0,
+    phone: '',
+    legalAddress: '',
+    website: '',
+    socials: { vk: '', telegram: '' }
+  });
+
+  useEffect(() => {
+    setCuttingType(defaultCuttingType);
+    setKerf(defaultCuttingType === 'nesting' ? 12 : 4);
+  }, [defaultCuttingType]);
   const [kerf, setKerf] = useState(defaultCuttingType === 'nesting' ? 12 : 4);
   const [addedProducts, setAddedProducts] = useState<any[]>([]);
   const [addedServices, setAddedServices] = useState<any[]>([]);
@@ -4429,6 +5546,9 @@ export default function App() {
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
+          if (data.productCategories) setProductCategories(data.productCategories);
+          if (data.defaultCuttingType) setDefaultCuttingType(data.defaultCuttingType);
+          if (data.companyInfo) setCompanyInfo(data.companyInfo);
           if (data.coefficients) {
             // Ensure structure is correct
             if (data.coefficients.retail && data.coefficients.wholesale && data.coefficients.designer) {
@@ -4569,7 +5689,9 @@ export default function App() {
           facadeThicknessOverride,
           addedProducts,
           addedServices,
-          serviceData
+          serviceData,
+          furnitureType,
+          checklistRefused
         }
       };
       
@@ -4613,6 +5735,8 @@ export default function App() {
     if (d.addedProducts) setAddedProducts(d.addedProducts);
     if (d.addedServices) setAddedServices(d.addedServices);
     if (d.serviceData) setServiceData(d.serviceData);
+    if (d.furnitureType) setFurnitureType(d.furnitureType);
+    if (d.checklistRefused) setChecklistRefused(d.checklistRefused);
     
     setCurrentProjectId(project.id);
     setCurrentProjectName(project.name);
@@ -4668,7 +5792,9 @@ export default function App() {
         assemblyPercentage,
         deliveryTariffs,
         mapLink,
-        productCategories
+        productCategories,
+        defaultCuttingType,
+        companyInfo
       });
       
       // If production, also save production settings (which contain salon coefficients)
@@ -4694,7 +5820,10 @@ export default function App() {
     baseVolume: 10,
     extraKmPrice: 50,
     extraVolumePrice: 200,
-    extraLoaderPrice: 1000
+    extraLoaderPrice: 1000,
+    loadingBase: 500,
+    floorPrice: 200,
+    elevatorPrice: 500
   });
   const [serviceData, setServiceData] = useState({
     address: {
@@ -4765,6 +5894,7 @@ export default function App() {
   const [facadeMilling, setFacadeMilling] = useState<Record<string, string>>({});
   const [facadeThicknessOverride, setFacadeThicknessOverride] = useState<Record<string, string>>({});
   const [edgePrices, setEdgePrices] = useState<Record<string, number>>({});
+  const [mergedMaterials, setMergedMaterials] = useState<Record<string, string>>({});
   const [calcMode, setCalcMode] = useState<'sheet' | 'area'>('area');
   const [coefficients, setCoefficients] = useState({
     retail: {
@@ -4851,16 +5981,19 @@ export default function App() {
     setFacadeMilling({});
     setFacadeThicknessOverride({});
     setSheetConfigs({});
-    setTrimming({ top: 15, bottom: 15, left: 15, right: 15 });
+    setTrimming(10);
     setKerf(4);
     setRotations({});
     setCuttingType('saw');
-    setEdgeToEdge(true);
+    setEdgeToEdge({});
     setEdgePrices({});
+    setMergedMaterials({});
     setEdgeThickness({});
     setEdgeDecor({});
     setAddedProducts([]);
     setAddedServices([]);
+    setFurnitureType('');
+    setChecklistRefused({});
     setServiceData({
       address: { street: '', house: '', apartment: '', floor: '', elevator: 'none' },
       delivery: false,
@@ -4898,6 +6031,9 @@ export default function App() {
         if (d.addedProducts) setAddedProducts(d.addedProducts);
         if (d.addedServices) setAddedServices(d.addedServices);
         if (d.serviceData) setServiceData(d.serviceData);
+        if (d.furnitureType) setFurnitureType(d.furnitureType);
+        if (d.checklistRefused) setChecklistRefused(d.checklistRefused);
+        if (d.mergedMaterials) setMergedMaterials(d.mergedMaterials);
         if (d.currentProjectId) setCurrentProjectId(d.currentProjectId);
         if (d.currentProjectName) setCurrentProjectName(d.currentProjectName);
       } catch (e) {
@@ -4906,7 +6042,6 @@ export default function App() {
     }
   }, []);
 
-  // Save draft anytime important params change
   useEffect(() => {
     if (results || addedProducts.length > 0 || addedServices.length > 0) {
       const draftState = {
@@ -4914,7 +6049,7 @@ export default function App() {
         trimming, kerf, rotations, cuttingType, calcMode, edgeToEdge,
         edgePrices, edgeThickness, edgeDecor, facadeCustomType, facadeCategory,
         facadeMilling, facadeThicknessOverride, addedProducts, addedServices, serviceData,
-        currentProjectId, currentProjectName
+        currentProjectId, currentProjectName, mergedMaterials, furnitureType, checklistRefused
       };
       localStorage.setItem('mebcalc_draft', JSON.stringify(draftState));
     }
@@ -4923,7 +6058,7 @@ export default function App() {
     trimming, kerf, rotations, cuttingType, calcMode, edgeToEdge,
     edgePrices, edgeThickness, edgeDecor, facadeCustomType, facadeCategory,
     facadeMilling, facadeThicknessOverride, addedProducts, addedServices, serviceData,
-    currentProjectId, currentProjectName
+    currentProjectId, currentProjectName, furnitureType, checklistRefused
   ]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -5111,7 +6246,13 @@ export default function App() {
     // Now apply local (salon/designer) markups over the base (factory or default) prices
     if (!coefficients || !coefficients[customerType]) return baseCoeffs;
     
-    const myMarkup = coefficients[customerType];
+    let myMarkup = coefficients[customerType] as any;
+    
+    // If we are a production and viewing as a Salon (wholesale), use standardCoefficients
+    if (customerType === 'wholesale' && companyData?.type === 'Мебельное производство' && ownProductionConfig.standardCoefficients) {
+      myMarkup = ownProductionConfig.standardCoefficients as any;
+    }
+
     const result = {
       ...baseCoeffs,
       ldsp: (baseCoeffs.ldsp || 1) * (myMarkup.ldsp || 1),
@@ -5136,10 +6277,18 @@ export default function App() {
 
   const totalCostForService = useMemo(() => {
     if (!results) return 0;
+    
+    // Helper to get config
+    const configToUse = (productionFormat === 'contract' && productionSettings?.production) 
+      ? productionSettings.production 
+      : ownProductionConfig;
+
     let total = 0;
     Object.entries(results).forEach(([key, item]: any) => {
       const decor = selectedDecor[key];
-      const priceKey = typeof decor === 'string' ? decor.replace(' ', '|') : '';
+      const basePriceKey = typeof decor === 'string' ? decor.replace(' ', '|') : '';
+      const isManualMaterial = basePriceKey ? (!configToUse.prices?.[basePriceKey] || configToUse.prices?.[basePriceKey] === 0) : true;
+      const priceKey = isManualMaterial ? `manual_${key}` : basePriceKey;
       const price = prices[priceKey] || 0;
       
       const isSheetFacade = item.type === 'Фасад' && (facadeType[key] || 'sheet') === 'sheet';
@@ -5605,9 +6754,16 @@ export default function App() {
             currentProjectName={currentProjectName}
             onNewProject={handleNewProject}
             showPrompt={showPrompt}
+            showConfirm={showConfirm}
             productionFormat={productionFormat}
             productionSettings={productionSettings}
             ownProductionConfig={ownProductionConfig}
+            mergedMaterials={mergedMaterials}
+            setMergedMaterials={setMergedMaterials}
+            isGluingMode={isGluingMode}
+            setIsGluingMode={setIsGluingMode}
+            selectedForGlue={selectedForGlue}
+            setSelectedForGlue={setSelectedForGlue}
           />
         ) : activeTab === 'summary' ? (
           <SummaryView 
@@ -5650,6 +6806,13 @@ export default function App() {
             productionSettings={productionSettings}
             userRole={userRole}
             companyType={companyData?.type}
+            setPrices={setPrices}
+            mergedMaterials={mergedMaterials}
+            selectedForGlue={selectedForGlue}
+            furnitureType={furnitureType}
+            setFurnitureType={setFurnitureType}
+            checklistRefused={checklistRefused}
+            setChecklistRefused={setChecklistRefused}
           />
         ) : activeTab === 'projects' ? (
           <ProjectsView 
@@ -5677,6 +6840,11 @@ export default function App() {
             onDeleteProduct={deleteProduct}
             userRole={userRole}
             companyType={companyData?.type}
+            furnitureType={furnitureType}
+            setFurnitureType={setFurnitureType}
+            checklistRefused={checklistRefused}
+            setChecklistRefused={setChecklistRefused}
+            addedProducts={addedProducts}
           />
         ) : activeTab === 'services' ? (
           <ServicesView 
@@ -5733,6 +6901,11 @@ export default function App() {
             allCompanies={allCompanies}
             manufacturerCoefficients={manufacturerCoefficients}
             setShowManufacturerCoeffs={setShowManufacturerCoeffs}
+            isGluingMode={isGluingMode}
+            setIsGluingMode={setIsGluingMode}
+            selectedForGlue={selectedForGlue}
+            setSelectedForGlue={setSelectedForGlue}
+            sheetConfigs={sheetConfigs}
           />
         ) : activeTab === 'employees' ? (
           <AdminSettingsView 
@@ -5777,6 +6950,8 @@ export default function App() {
             updateStandardCoefficient={updateStandardCoefficient}
             updateSalonCoefficient={updateSalonCoefficient}
             ownProductionConfig={ownProductionConfig}
+            companyInfo={companyInfo}
+            setCompanyInfo={setCompanyInfo}
           />
         ) : activeTab === 'specification' && selectedProjectForSpec ? (
           <ProjectSpecificationView 
@@ -5831,9 +7006,16 @@ export default function App() {
             currentProjectName={currentProjectName}
             onNewProject={handleNewProject}
             showPrompt={showPrompt}
+            showConfirm={showConfirm}
             productionFormat={productionFormat}
             productionSettings={productionSettings}
             ownProductionConfig={ownProductionConfig}
+            mergedMaterials={mergedMaterials}
+            setMergedMaterials={setMergedMaterials}
+            isGluingMode={isGluingMode}
+            setIsGluingMode={setIsGluingMode}
+            selectedForGlue={selectedForGlue}
+            setSelectedForGlue={setSelectedForGlue}
           />
         )}
       </main>

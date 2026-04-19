@@ -18,6 +18,7 @@ interface Employee {
   email: string;
   role: string;
   accessLevel: 'admin' | 'manager' | 'worker';
+  createdAt?: string;
 }
 
 export const AdminSettingsView = ({ 
