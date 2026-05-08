@@ -5,6 +5,9 @@ import './index.css';
 // @ts-ignore
 import { registerSW } from 'virtual:pwa-register';
 
+const appVersion = "1.0.1";
+console.log("App version: ", appVersion);
+
 // Регистрируем Service Worker для оффлайн работы
 const updateSW = registerSW({ 
   immediate: true,
