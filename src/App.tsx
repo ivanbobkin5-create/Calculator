@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import * as ReactDOM from 'react-dom';
 import { formatPhoneNumber } from './lib/utils';
 
@@ -26,6 +27,8 @@ import { AppAdminView } from './components/Admin/AppAdminView';
 import { LandingPage } from './components/Landing/LandingPage';
 import { ProjectsView } from './components/Projects/ProjectsView';
 import { ProjectSpecificationView } from './components/Projects/ProjectSpecificationView';
+import { ProjectSetCheckoutModal } from './components/Projects/ProjectSetCheckoutModal';
+import { SpecificationPrintView } from './components/Projects/SpecificationPrintView';
 import { 
   Menu, 
   X, 
@@ -45,6 +48,7 @@ import {
   MapPin,
   CheckCircle2,
   Trash2,
+  Save,
   Edit2,
   Minus,
   Factory,
@@ -67,6 +71,7 @@ import {
   Combine,
   RotateCcw,
   RotateCw,
+  TableProperties,
   Globe,
   Send,
   ClipboardList,
@@ -74,7 +79,9 @@ import {
   Maximize2,
   Building2,
   Settings as SettingsIcon,
-  AlertTriangle
+  AlertTriangle,
+  Layers,
+  Target
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -171,6 +178,53 @@ interface WorktopCut {
   edgeType?: 'Самоклеющаяся' | 'ABC';
 }
 
+interface FacadeSettings {
+  displayName?: string;
+  minOrderVolume?: number;
+  thicknesses?: string[];
+  categories: { id: string; name: string; purchasePrice: number }[];
+  millings: { id: string; name: string; purchasePrice: number }[];
+  thicknessPrices: Record<string, number>;
+  priceGrid?: Record<string, number>; // "categoryId:millingId" -> price
+  thicknessGrid?: Record<string, number>; // "thickness:millingId" -> surcharge
+}
+
+interface ExtraFacadeType {
+  id: string;
+  name: string;
+  displayName: string;
+  thicknesses: string[];
+  settings: FacadeSettings;
+}
+
+interface BrandCoefficient {
+  id: string;
+  categoryId: string;
+  brand: string;
+  retail: number;
+  wholesale: number;
+  designer: number;
+  standardSalon: number;
+  salonCoeffs?: Record<string, number>;
+}
+
+interface FurnitureSet {
+  id: string;
+  name: string;
+  contractNumber?: string;
+  contractDate?: string;
+  leadTimeDays?: number;
+  readyDate?: string;
+  productionCycle?: 'working' | 'calendar';
+  projectIds: string[];
+  totalPrice?: number;
+  clientName?: string;
+  clientPhone?: string;
+  sketches?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface OwnProductionConfig {
   ldspBrands: LdspBrandFormat[];
   edgeTypes: { eva: boolean; pur: boolean };
@@ -180,11 +234,16 @@ interface OwnProductionConfig {
   customFacades: string[];
   address: string;
   photos: string[];
+  facadeSettings?: FacadeSettings;
+  enamelSettings?: FacadeSettings;
+  extraFacadeTypes?: ExtraFacadeType[];
   edgeMultiplicity?: Record<string, number>; // "brandId:thickness" -> multiplicity
   edgeNotAvailable?: Record<string, boolean>; // "brandId:thickness" -> boolean
   salonCoefficients?: Record<string, Record<string, number>>; // salonId -> { category -> coefficient }
   specialConditionIds?: string[]; // IDs of salons with special conditions enabled
   standardCoefficients?: Record<string, number>; // standard coefficients for all salons
+  brandCoefficients?: BrandCoefficient[];
+  productionCycle?: 'working' | 'calendar';
 }
 
 const CITIES = ['Москва', 'Санкт-Петербург', 'Казань', 'Екатеринбург', 'Новосибирск', 'Краснодар'];
@@ -343,7 +402,7 @@ const ProductionView = ({
                       <div key={brand.id} className="grid grid-cols-[1fr_120px_1fr_auto] gap-4 items-center">
                         <input 
                           type="text"
-                          value={brand.brand}
+                          value={brand.brand || ''}
                           onChange={(e) => handleUpdateBrand(brand.id, 'brand', e.target.value)}
                           placeholder="Например, Egger"
                           className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
@@ -359,7 +418,7 @@ const ProductionView = ({
                         </select>
                         <input 
                           type="text"
-                          value={brand.format}
+                          value={brand.format || ''}
                           onChange={(e) => handleUpdateBrand(brand.id, 'format', e.target.value)}
                           placeholder="Например, 2800x2070"
                           className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
@@ -1038,6 +1097,320 @@ const packDetails = (details: Detail[], sheetWidth: number, sheetHeight: number,
   return sheets;
 };
 
+const FacadePriceGrid = ({ 
+  title, 
+  icon: Icon,
+  settings, 
+  onUpdate, 
+  showConfirm,
+  onRemove,
+  onUpdateTitle,
+  surchargeThicknesses = ['16', '19', '22'],
+  onUpdateThicknesses
+}: { 
+  title: string, 
+  icon: any,
+  settings: FacadeSettings | undefined, 
+  onUpdate: (updater: (prev: FacadeSettings) => FacadeSettings) => void,
+  showConfirm: (t: string, m: string, cb: () => void) => void,
+  onRemove?: () => void,
+  onUpdateTitle?: (newTitle: string) => void,
+  surchargeThicknesses?: string[],
+  onUpdateThicknesses?: (newThicknesses: string[]) => void
+}) => {
+  const [showAddThickness, setShowAddThickness] = useState(false);
+  const [newThickVal, setNewThickVal] = useState('19');
+
+  const currentSettings = settings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} };
+  const categories = currentSettings.categories || [];
+  const millings = currentSettings.millings || [];
+  
+  const handleAddThick = () => {
+    if (newThickVal && !surchargeThicknesses.includes(newThickVal)) {
+      onUpdateThicknesses?.([...surchargeThicknesses, newThickVal].sort((a,b) => parseInt(a) - parseInt(b)));
+    }
+    setShowAddThickness(false);
+    setNewThickVal('19');
+  };
+
+  // First thickness is base, others are extra
+  const baseThickness = surchargeThicknesses[0] || '16';
+  const extraThicknesses = surchargeThicknesses.slice(1);
+  const test = "verify";
+  
+  return (
+    <section className="bg-white p-6 rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="flex items-center justify-between mb-8">
+           <div className="flex items-center gap-3">
+             <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center">
+               <Icon className="w-5 h-5 text-indigo-600" />
+             </div>
+             <div>
+               <div className="flex items-center gap-2">
+                 <input 
+                   value={title}
+                   onChange={(e) => onUpdateTitle?.(e.target.value)}
+                   className="text-lg font-black text-gray-900 leading-none outline-none focus:ring-2 focus:ring-blue-500 rounded bg-transparent px-1"
+                   placeholder="Название типа фасадов"
+                   readOnly={!onUpdateTitle}
+                 />
+                 {onRemove && (
+                   <button 
+                     onClick={onRemove}
+                     className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                     title="Удалить тип"
+                   >
+                     <Trash2 className="w-4 h-4" />
+                   </button>
+                 )}
+               </div>
+               <p className="text-xs text-gray-400 font-medium mt-1">Цены за м² (Категории, Толщины: {surchargeThicknesses.join(', ')})</p>
+             </div>
+           </div>
+
+           <div className="flex items-center gap-3 px-4 py-2 bg-amber-50 border border-amber-100 rounded-xl">
+             <div className="flex flex-col">
+               <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Мин. объем заказа</span>
+               <div className="flex items-center gap-1">
+                 <input 
+                   type="number"
+                   step="0.1"
+                   value={currentSettings.minOrderVolume || 0}
+                   onChange={(e) => onUpdate(prev => ({ ...prev, minOrderVolume: parseFloat(e.target.value) || 0 }))}
+                   className="w-16 px-1.5 py-0.5 bg-white border border-amber-200 rounded text-sm font-bold text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                 />
+                 <span className="text-xs font-black text-amber-600">м²</span>
+               </div>
+             </div>
+           </div>
+         </div>
+           <div className="flex gap-2">
+              <button
+                onClick={() => {
+                    const id = 'c' + Date.now();
+                    onUpdate(prev => ({
+                        ...(prev || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }),
+                        categories: [...(prev?.categories || []), { id, name: 'Кат. ' + ((prev?.categories?.length || 0) + 1), purchasePrice: 0 }]
+                    }));
+                }}
+                className="px-3 py-1.5 bg-blue-50 text-blue-600 text-xs font-bold rounded-lg hover:bg-blue-100 transition-all flex items-center gap-2"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Категория
+              </button>
+              <button
+                onClick={() => {
+                    const id = 'm' + Date.now();
+                    onUpdate(prev => ({
+                        ...(prev || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }),
+                        millings: [...(prev?.millings || []), { id, name: 'Фрез. ' + ((prev?.millings?.length || 0) + 1), purchasePrice: 0 }]
+                    }));
+                }}
+                className="px-3 py-1.5 bg-purple-50 text-purple-600 text-xs font-bold rounded-lg hover:bg-purple-100 transition-all flex items-center gap-2"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Фрезеровка
+              </button>
+              <button
+                onClick={() => setShowAddThickness(true)}
+                className="px-3 py-1.5 bg-orange-50 text-orange-600 text-xs font-bold rounded-lg hover:bg-orange-100 transition-all flex items-center gap-2"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Толщина
+              </button>
+            </div>
+
+            {/* Thickness Add Modal */}
+            {showAddThickness && (
+              <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+                <div className="bg-white rounded-[2rem] w-full max-w-xs overflow-hidden shadow-2xl border border-gray-100 animate-in zoom-in duration-200">
+                  <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+                    <h4 className="text-sm font-black text-gray-900 uppercase tracking-tight">Добавить толщину</h4>
+                    <button onClick={() => setShowAddThickness(false)} className="p-1 text-gray-400 hover:text-gray-900"><X className="w-4 h-4"/></button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Толщина материала (мм)</label>
+                      <input 
+                        autoFocus
+                        type="number"
+                        value={newThickVal}
+                        onChange={e => setNewThickVal(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none font-bold text-gray-900"
+                        onKeyPress={e => e.key === 'Enter' && handleAddThick()}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                       <button 
+                        onClick={() => setShowAddThickness(false)}
+                        className="flex-1 py-3 text-xs font-bold text-gray-400 hover:text-gray-600"
+                       >
+                         Отмена
+                       </button>
+                       <button 
+                        onClick={handleAddThick}
+                        className="flex-[2] py-3 bg-orange-600 text-white rounded-xl text-xs font-black shadow-lg shadow-orange-100 hover:bg-orange-700"
+                       >
+                         Добавить
+                       </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+        <div className="overflow-x-auto -mx-6 px-6 pb-4">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="sticky left-0 z-10 p-4 bg-gray-50 border border-gray-200 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest min-w-[200px] shadow-[2px_0_5px_rgba(0,0,0,0.01)]">
+                  Категория / Фрезеровка
+                </th>
+                {millings.map(mill => (
+                  <th key={mill.id} className="p-4 bg-gray-50 border border-gray-200 text-center min-w-[120px]">
+                     <div className="flex flex-col items-center gap-1">
+                        <input 
+                           value={mill.name || ''}
+                           onChange={(e) => {
+                               const val = e.target.value;
+                               onUpdate(prev => ({
+                                 ...prev,
+                                 millings: prev.millings.map(m => m.id === mill.id ? { ...m, name: val } : m)
+                               }));
+                           }}
+                           className="bg-transparent text-center font-bold text-gray-800 text-xs outline-none focus:ring-1 focus:ring-purple-500 rounded px-1 w-full"
+                        />
+                        <button 
+                          onClick={() => {
+                            showConfirm('Удалить фрезеровку', `Удалить фрезеровку "${mill.name}"?`, () => {
+                              onUpdate(prev => ({
+                                  ...prev,
+                                  millings: prev.millings.filter(m => m.id !== mill.id)
+                              }));
+                            });
+                          }}
+                          className="text-[10px] text-gray-400 hover:text-red-500 transition-colors uppercase font-bold"
+                        >
+                          Удалить
+                        </button>
+                     </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {/* Category Rows */}
+              {categories.map(catItem => (
+                <tr key={catItem.id} className="group hover:bg-blue-50/5 transition-colors">
+                  <td className="sticky left-0 z-10 p-4 border border-gray-200 bg-white group-hover:bg-blue-50/20 shadow-[2px_0_5px_rgba(0,0,0,0.01)]">
+                     <div className="flex flex-col gap-1">
+                        <input 
+                           value={catItem.name || ''}
+                           onChange={(e) => {
+                               const val = e.target.value;
+                               onUpdate(prev => ({
+                                   ...prev,
+                                   categories: prev.categories.map(c => c.id === catItem.id ? { ...c, name: val } : c)
+                               }));
+                           }}
+                           className="bg-transparent font-bold text-gray-800 text-xs outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full"
+                        />
+                        <button 
+                          onClick={() => {
+                            showConfirm('Удалить категорию', `Удалить категорию "${catItem.name}"?`, () => {
+                              onUpdate(prev => ({
+                                  ...prev,
+                                  categories: prev.categories.filter(c => c.id !== catItem.id)
+                               }));
+                            });
+                          }}
+                          className="text-[10px] text-left text-gray-400 hover:text-red-500 transition-colors uppercase font-bold px-1"
+                        >
+                          Удалить
+                        </button>
+                     </div>
+                  </td>
+                  {millings.map(mill => {
+                     const gridKey = `${catItem.id}:${mill.id}`;
+                     return (
+                       <td key={gridKey} className="p-0 border border-gray-200">
+                         <div className="relative group/cell">
+                           <input 
+                              type="number"
+                              value={currentSettings.priceGrid?.[gridKey] === 0 ? '' : currentSettings.priceGrid?.[gridKey]}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => {
+                                  const val = e.target.value.replace(/[^0-9.]/g, '');
+                                  onUpdate(prev => ({
+                                      ...prev,
+                                      priceGrid: { ...(prev.priceGrid || {}), [gridKey]: val === '' ? 0 : parseFloat(val) }
+                                  }));
+                              }}
+                              className="w-full h-14 p-4 text-center text-sm font-black text-blue-600 bg-transparent outline-none focus:ring-2 focus:ring-blue-500 focus:bg-blue-50/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              placeholder="0"
+                           />
+                           <div className="absolute right-2 bottom-1 text-[8px] font-bold text-gray-300 opacity-0 group-hover/cell:opacity-100 transition-opacity">₽/м²</div>
+                         </div>
+                       </td>
+                     );
+                  })}
+                </tr>
+              ))}
+
+              {/* Thickness Rows - ONLY show if there are extra thicknesses */}
+              {extraThicknesses.map(th => (
+                <tr key={th} className="bg-gray-50/30">
+                  <td className="sticky left-0 z-10 p-4 border border-gray-200 bg-gray-50 font-black text-gray-800 text-[10px] uppercase shadow-[2px_0_5px_rgba(0,0,0,0.01)]">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-3 h-3 text-indigo-400" />
+                      <span>{th} мм (Доплата)</span>
+                      {onUpdateThicknesses && (
+                        <button 
+                          onClick={() => {
+                            if (confirm(`Удалить толщину ${th} мм?`)) {
+                              onUpdateThicknesses(surchargeThicknesses.filter(t => t !== th));
+                            }
+                          }}
+                          className="ml-auto p-1 text-gray-300 hover:text-red-500"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                  {millings.map(mill => {
+                    const gridKey = `${th}:${mill.id}`;
+                    return (
+                      <td key={gridKey} className="p-0 border border-gray-200">
+                        <div className="relative group/cell">
+                          <input 
+                             type="number"
+                             value={currentSettings.thicknessGrid?.[gridKey] || 0}
+                             onFocus={(e) => e.target.select()}
+                             onChange={(e) => {
+                                 const val = parseFloat(e.target.value) || 0;
+                                 onUpdate(prev => ({
+                                     ...prev,
+                                     thicknessGrid: { ...(prev.thicknessGrid || {}), [gridKey]: val }
+                                 }));
+                             }}
+                             className="w-full h-14 p-4 text-center text-sm font-bold text-orange-600 bg-transparent outline-none focus:ring-2 focus:ring-orange-500 focus:bg-orange-50/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                             placeholder="0"
+                          />
+                          <div className="absolute right-2 bottom-1 text-[8px] font-bold text-gray-300 opacity-0 group-hover/cell:opacity-100 transition-opacity">+₽/м²</div>
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+     </section>
+  );
+};
+
 const PriceView = ({ 
   calcMode, 
   prices, 
@@ -1050,7 +1423,15 @@ const PriceView = ({
   isProduction,
   catalogProducts,
   showAlert,
-  userRole
+  userRole,
+  catalogMaterials,
+  setCatalogMaterials,
+  showPrompt,
+  showConfirm,
+  ownProductionConfig,
+  setOwnProductionConfig,
+  onSave,
+  setCatalogServices
 }: { 
   calcMode: string; 
   prices: Record<string, number>; 
@@ -1064,8 +1445,17 @@ const PriceView = ({
   catalogProducts: any[];
   showAlert: (title: string, message: string) => void;
   userRole?: string | null;
+  catalogMaterials: Record<string, string[]>;
+  setCatalogMaterials: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  showPrompt: (title: string, message: string, defaultValue: string, onConfirm: (value: string) => void) => void;
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void;
+  ownProductionConfig: OwnProductionConfig;
+  setOwnProductionConfig: React.Dispatch<React.SetStateAction<OwnProductionConfig>>;
+  onSave?: () => Promise<void>;
+  setCatalogServices: React.Dispatch<React.SetStateAction<any[]>>;
 }) => {
   const [priceSearch, setPriceSearch] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedBrands, setExpandedBrands] = useState<Set<string>>(new Set());
 
@@ -1091,59 +1481,210 @@ const PriceView = ({
     return PRICE_LIST_CATEGORIES.map(cat => {
       // Find products in this category
       const products = catalogProducts.filter(p => p.category === cat.title);
+      
+      // If it's the "Materials" category, also include any custom brands from catalogMaterials
+      if (cat.title === 'Материалы') {
+        const customBrands = Object.keys(catalogMaterials).filter(b => 
+          !PRICE_LIST_CATEGORIES.some(c => c.title !== 'Материалы' && c.brands.includes(b))
+        );
+        const allBrands = Array.from(new Set([...cat.brands, ...customBrands]));
+        return { ...cat, products, brands: allBrands };
+      }
+
+      if (cat.title === 'Фасады заказные') {
+          const customFacadeBrands: string[] = [];
+          if (ownProductionConfig.facadeSettings?.displayName) customFacadeBrands.push(ownProductionConfig.facadeSettings.displayName);
+          if (ownProductionConfig.enamelSettings?.displayName) customFacadeBrands.push(ownProductionConfig.enamelSettings.displayName);
+          ownProductionConfig.extraFacadeTypes?.forEach(t => {
+              if (t.displayName) customFacadeBrands.push(t.displayName);
+          });
+          const allBrands = Array.from(new Set([...cat.brands, ...customFacadeBrands]));
+          return { ...cat, products, brands: allBrands };
+      }
+      
       return { ...cat, products };
     });
-  }, [catalogProducts]);
+  }, [catalogProducts, catalogMaterials, ownProductionConfig]);
 
   const exportToExcel = () => {
-    const data: any[] = [];
+    const workbook = XLSX.utils.book_new();
+
     categoriesToDisplay.forEach(cat => {
-      // Materials/Brands
+      const sheetData: any[] = [];
+      const dynamicKeys = new Set<string>();
+      
+      // Fixed Headers
+      const fixedHeaders = ['Категория', 'Подкатегория/Бренд', 'Тип данных', 'Наименование', 'Цена', 'Мин. объем'];
+      fixedHeaders.forEach(h => dynamicKeys.add(h));
+
+      // 1. Materials, Services and Facades
       cat.brands.forEach(brand => {
         const isServices = brand === 'Услуги';
-        const decors = isServices ? catalogServices.map(s => s.name) : (LDSP_DATABASE[brand as keyof typeof LDSP_DATABASE] || []);
+        
+        let facadeSettings: FacadeSettings | null = null;
+        if (ownProductionConfig.facadeSettings?.displayName === brand) {
+            facadeSettings = ownProductionConfig.facadeSettings;
+        } else if (ownProductionConfig.enamelSettings?.displayName === brand) {
+            facadeSettings = ownProductionConfig.enamelSettings;
+        } else {
+            const extra = ownProductionConfig.extraFacadeTypes?.find(t => t.displayName === brand);
+            if (extra) facadeSettings = extra.settings;
+        }
+
+        if (facadeSettings) {
+            // Categories
+            facadeSettings.categories.forEach(c => {
+                const row: any = {
+                    'Категория': cat.title,
+                    'Подкатегория/Бренд': brand,
+                    'Тип данных': 'Категория фасада',
+                    'Наименование': c.name,
+                    'Цена': c.purchasePrice || 0,
+                    'Мин. объем': facadeSettings?.minOrderVolume || 0,
+                    'ID/Ключ': `facade|${brand}|cat|${c.id}`
+                };
+                sheetData.push(row);
+                Object.keys(row).forEach(k => dynamicKeys.add(k));
+            });
+            // Millings
+            facadeSettings.millings.forEach(m => {
+                const row: any = {
+                    'Категория': cat.title,
+                    'Подкатегория/Бренд': brand,
+                    'Тип данных': 'Фрезеровка фасада',
+                    'Наименование': m.name,
+                    'Цена': m.purchasePrice || 0,
+                    'Мин. объем': '-',
+                    'ID/Ключ': `facade|${brand}|mill|${m.id}`
+                };
+                sheetData.push(row);
+                Object.keys(row).forEach(k => dynamicKeys.add(k));
+            });
+            // Thicknesses
+            if (facadeSettings.thicknessPrices) {
+                Object.entries(facadeSettings.thicknessPrices).forEach(([thickness, price]) => {
+                   const row: any = {
+                      'Категория': cat.title,
+                      'Подкатегория/Бренд': brand,
+                      'Тип данных': 'Толщина фасада (доплата)',
+                      'Наименование': `${thickness} мм`,
+                      'Цена': price || 0,
+                      'Мин. объем': '-',
+                      'ID/Ключ': `facade|${brand}|thick|${thickness}`
+                   };
+                   sheetData.push(row);
+                   Object.keys(row).forEach(k => dynamicKeys.add(k));
+                });
+            }
+            return;
+        }
+
+        const ldspBrand = ownProductionConfig.ldspBrands?.find(b => b.brand === brand);
+        const decors = isServices 
+          ? catalogServices.map(s => s.name) 
+          : (ldspBrand 
+            ? (catalogMaterials[brand] || []) 
+            : (LDSP_DATABASE[brand as keyof typeof LDSP_DATABASE] || catalogMaterials[brand] || []));
+
         decors.forEach(decor => {
           const priceKey = isServices ? decor : `${brand}|${decor}`;
-          data.push({
+          const row: any = {
             'Категория': cat.title,
             'Подкатегория/Бренд': brand,
+            'Тип данных': isServices ? 'Услуга' : 'Декор / Цвет',
             'Наименование': decor,
             'Цена': prices[priceKey] || 0,
-            'ID/Ключ': priceKey,
-            'Тип': isServices ? 'Услуга' : 'Материал'
-          });
+            'Мин. объем': '-',
+            'ID/Ключ': priceKey
+          };
+          sheetData.push(row);
+          Object.keys(row).forEach(k => dynamicKeys.add(k));
         });
       });
 
-      // Simple Products
+      // 2. Simple Products with dynamic characteristics
       cat.products.forEach(product => {
-        data.push({
+        const row: any = {
           'Категория': cat.title,
-          'Подкатегория/Бренд': '-',
+          'Подкатегория/Бренд': product.brand || '-',
+          'Тип данных': product.type || 'Товар',
           'Наименование': product.name,
           'Цена': product.price || 0,
-          'ID/Ключ': `product|${product.id}`,
-          'Тип': 'Товар'
+          'Мин. объем': '-',
+          'ID/Ключ': `product|${product.id}`
+        };
+
+        // Find all characteristics
+        const skipKeys = ['id', 'category', 'brand', 'type', 'name', 'price', 'description', 'image', 'purchasePrice'];
+        Object.entries(product).forEach(([k, v]) => {
+           // ONLY add if it's a real value, NOT '-', NOT null/undefined/empty
+           if (!skipKeys.includes(k) && v !== undefined && v !== null && v !== '' && v !== '-') {
+             const labelMap: Record<string, string> = {
+                'depth': 'Глубина',
+                'width': 'Ширина',
+                'height': 'Высота',
+                'material': 'Материал',
+                'color': 'Цвет',
+                'manufacturer': 'Производитель',
+                'surfaceType': 'Тип поверхности',
+                'openingType': 'Тип открывания',
+                'closingType': 'Тип закрывания',
+                'loadCapacity': 'Грузоподъемность',
+                'length': 'Длина',
+                'thickness': 'Толщина',
+                'unit': 'Ед. изм.',
+                'article': 'Артикул'
+             };
+             const label = labelMap[k] || k;
+             row[label] = v;
+             dynamicKeys.add(label);
+           }
         });
+
+        sheetData.push(row);
       });
+
+      if (sheetData.length > 0) {
+        // Build final data ensure every row has all columns from dynamicKeys
+        const allColumns = Array.from(dynamicKeys);
+        // Ensure ID/Ключ is always at the end
+        const technicalColumns = ['ID/Ключ'];
+        const contentColumns = allColumns.filter(c => !technicalColumns.includes(c));
+        const finalHeaders = [...contentColumns, ...technicalColumns];
+
+        const finalRows = sheetData.map(row => {
+           const fullRow: any = {};
+           finalHeaders.forEach(h => {
+             fullRow[h] = (row[h] !== undefined && row[h] !== null) ? row[h] : '-';
+           });
+           return fullRow;
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(finalRows, { header: finalHeaders });
+        
+        // Auto-fit columns and EXPLICITLY set width/visibility for all
+        const maxWidths = finalRows.reduce((acc, row) => {
+          finalHeaders.forEach((key, i) => {
+            const val = row[key];
+            const len = val ? String(val).length : 0;
+            if (!acc[i] || len > acc[i]) acc[i] = len;
+          });
+          return acc;
+        }, finalHeaders.map(h => h.length));
+        
+        worksheet['!cols'] = maxWidths.map((w: number) => ({ 
+          wch: Math.min(Math.max(w + 5, 20), 100),
+          hidden: false 
+        }));
+
+        const safeSheetName = cat.title.substring(0, 31).replace(/[\[\]\?\*\/\\\:]/g, '');
+        XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
+      }
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Прайс-лист");
-    
-    // Auto-size columns
-    const maxWidths = data.reduce((acc, row) => {
-      Object.keys(row).forEach((key, i) => {
-        const len = String(row[key]).length;
-        if (!acc[i] || len > acc[i]) acc[i] = len;
-      });
-      return acc;
-    }, []);
-    worksheet['!cols'] = maxWidths.map((w: number) => ({ w: w + 2 }));
-
-    XLSX.writeFile(workbook, "PriceList_Template.xlsx");
+    XLSX.writeFile(workbook, "price_list.xlsx");
   };
+
 
   const importFromExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1154,31 +1695,203 @@ const PriceView = ({
       try {
         const bstr = evt.target?.result;
         const workbook = XLSX.read(bstr, { type: 'binary' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(worksheet) as any[];
+        
+        const allData: any[] = [];
+        workbook.SheetNames.forEach(name => {
+           const sheet = workbook.Sheets[name];
+           const sheetData = XLSX.utils.sheet_to_json(sheet) as any[];
+           allData.push(...sheetData);
+        });
+        const data = allData;
 
         const newPrices = { ...prices };
         const productsToUpdate: any[] = [];
+        const newProducts: any[] = [];
+        
+        let hasFacadeChanges = false;
+        let updatedFacadeSettings = ownProductionConfig.facadeSettings ? { ...ownProductionConfig.facadeSettings } : null;
+        let updatedEnamelSettings = ownProductionConfig.enamelSettings ? { ...ownProductionConfig.enamelSettings } : null;
+        let updatedExtraTypes = ownProductionConfig.extraFacadeTypes ? [...ownProductionConfig.extraFacadeTypes] : [];
 
         data.forEach(row => {
           const key = row['ID/Ключ'];
           const price = parseFloat(row['Цена']);
-          if (!key || isNaN(price)) return;
+          const name = row['Наименование'];
+          const category = row['Категория'];
+          const type = row['Тип'];
 
-          if (key.startsWith('product|')) {
-            const productId = key.replace('product|', '');
+          const brand = row['Подкатегория/Бренд'];
+          const dataType = row['Тип данных'];
+          
+          // Dynamically parse all other columns as characteristics
+          const charMap: any = {};
+          const knownFixedKeys = ['Категория', 'Подкатегория/Бренд', 'Тип данных', 'Наименование', 'Цена', 'Мин. объем', 'ID/Ключ'];
+          
+          Object.entries(row).forEach(([k, v]) => {
+            if (!knownFixedKeys.includes(k) && v !== undefined && v !== null && v !== '-') {
+               // Map common Russian labels back to internal keys
+               const reverseLabelMap: Record<string, string> = {
+                  'Глубина': 'depth',
+                  'Ширина': 'width',
+                  'Высота': 'height',
+                  'Материал': 'material',
+                  'Цвет': 'color',
+                  'Производитель': 'manufacturer',
+                  'Тип поверхности': 'surfaceType',
+                  'Тип открывания': 'openingType',
+                  'Тип закрывания': 'closingType',
+                  'Грузоподъемность': 'loadCapacity',
+                  'Длина': 'length',
+                  'Толщина': 'thickness',
+                  'Ед. изм.': 'unit',
+                  'Артикул': 'article'
+               };
+               const internalKey = reverseLabelMap[k] || k;
+               charMap[internalKey] = String(v).replace('мм', '').trim();
+            }
+          });
+
+          if (isNaN(price)) return;
+
+          // Handle custom facades
+          if (key && String(key).startsWith('facade|')) {
+             const parts = String(key).split('|');
+             const brandName = parts[1];
+             
+             const updateSettings = (s: FacadeSettings | null) => {
+                  if (!s) return null;
+                  const typeTag = parts[2];
+                  const targetId = parts[3];
+
+                  if (typeTag === 'cat') {
+                      const newCats = s.categories.map(c => c.id === targetId ? { ...c, purchasePrice: price } : c);
+                      if (JSON.stringify(newCats) !== JSON.stringify(s.categories)) {
+                          hasFacadeChanges = true;
+                          return { ...s, categories: newCats };
+                      }
+                  } else if (typeTag === 'mill') {
+                      const newMills = s.millings.map(m => m.id === targetId ? { ...m, purchasePrice: price } : m);
+                      if (JSON.stringify(newMills) !== JSON.stringify(s.millings)) {
+                          hasFacadeChanges = true;
+                          return { ...s, millings: newMills };
+                      }
+                  } else if (typeTag === 'thick') {
+                      const newThickPrices = { ...(s.thicknessPrices || {}), [targetId]: price };
+                      if (JSON.stringify(newThickPrices) !== JSON.stringify(s.thicknessPrices)) {
+                          hasFacadeChanges = true;
+                          return { ...s, thicknessPrices: newThickPrices };
+                      }
+                  }
+                  return s;
+             };
+
+             if (brandName === (updatedFacadeSettings?.displayName || "Пленка")) {
+                 updatedFacadeSettings = updateSettings(updatedFacadeSettings);
+             } else if (brandName === (updatedEnamelSettings?.displayName || "Эмаль")) {
+                 updatedEnamelSettings = updateSettings(updatedEnamelSettings);
+             } else {
+                 updatedExtraTypes = updatedExtraTypes.map(t => {
+                     if (t.displayName === brandName) {
+                         const newSettings = updateSettings(t.settings);
+                         if (newSettings) return { ...t, settings: newSettings };
+                     }
+                     return t;
+                 });
+             }
+             return;
+          }
+
+          // If it has a product key, try to find existing
+          if (key && String(key).startsWith('product|')) {
+            const productId = String(key).replace('product|', '');
             const product = catalogProducts.find(p => String(p.id) === productId);
             if (product) {
               productsToUpdate.push({ ...product, price });
+              return;
             }
-          } else {
+          }
+
+          // If no key or product not found by key, check if we should create a new one
+          const pCategories = PRICE_LIST_CATEGORIES
+            .filter(c => !['Материалы', 'Фасады заказные', 'Услуги производства'].includes(c.title))
+            .map(c => c.title);
+
+          const isProductCategory = pCategories.includes(String(category));
+
+          if (type === 'Товар' || isProductCategory || (!key && name && category)) {
+            // Check for duplicate by name in the same category
+            const isDuplicate = catalogProducts.some(p => 
+              p.category === category && 
+              p.name.toLowerCase() === String(name).toLowerCase()
+            );
+
+            if (!isDuplicate && name && category) {
+              newProducts.push({
+                id: Math.random().toString(36).substring(2, 11),
+                name: String(name),
+                category: String(category),
+                brand: brand && brand !== '-' ? String(brand) : "",
+                type: dataType && dataType !== 'Товар' ? String(dataType) : "",
+                price: price,
+                ...charMap,
+                description: `Импортировано из Excel (${new Date().toLocaleDateString()})`,
+                image: ""
+              });
+            } else if (isDuplicate) {
+              // If it's a duplicate by name, update the price and potentially other fields
+              const existingProduct = catalogProducts.find(p => 
+                p.category === category && 
+                p.name.toLowerCase() === String(name).toLowerCase()
+              );
+              if (existingProduct) {
+                productsToUpdate.push({ 
+                  ...existingProduct, 
+                  price, 
+                  brand: brand && brand !== '-' ? String(brand) : existingProduct.brand,
+                  type: dataType && dataType !== 'Товар' ? String(dataType) : existingProduct.type,
+                  ...charMap
+                });
+              }
+            }
+          } else if (key) {
+            // It's a material or service price key
             newPrices[key] = price;
+
+            // If it's a service (dataType is Услуга), ensure it exists in catalogServices
+            if (dataType === 'Услуга' || String(category) === 'Услуги производства') {
+              const exists = catalogServices.some(s => s.name === name || s.name === key);
+              if (!exists && name) {
+                 const newService = {
+                    id: `import-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+                    name: String(name),
+                    unit: charMap.unit || 'шт'
+                 };
+                 // We don't have a direct way to call setCatalogServices here easily if it's not in scope
+                 // But in App.tsx it should be. Wait, where is importFromExcel defined?
+                 // It's in App component.
+                 setCatalogServices(prev => [...prev, newService]);
+              }
+            }
           }
         });
 
         // Update global prices (categories)
         setPrices(newPrices);
+        
+        if (hasFacadeChanges) {
+            const updatedConfig = {
+                ...ownProductionConfig,
+                facadeSettings: updatedFacadeSettings || ownProductionConfig.facadeSettings,
+                enamelSettings: updatedEnamelSettings || ownProductionConfig.enamelSettings,
+                extraFacadeTypes: updatedExtraTypes.length > 0 ? updatedExtraTypes : ownProductionConfig.extraFacadeTypes
+            };
+            setOwnProductionConfig(updatedConfig);
+            
+            const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
+            if (companyId && (productionFormat === 'own' || isProduction)) {
+                await setDoc(doc(db, 'companies', companyId, 'settings', 'production'), updatedConfig, { merge: true });
+            }
+        }
 
         const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
         if (companyId) {
@@ -1187,13 +1900,22 @@ const PriceView = ({
             prices: newPrices
           }, { merge: true });
 
-          // Update all catalog products
+          // Update existing products
           for (const p of productsToUpdate) {
             await setDoc(doc(db, 'companies', companyId, 'products', String(p.id)), p, { merge: true });
           }
+
+          // Save new products
+          for (const p of newProducts) {
+            await setDoc(doc(db, 'companies', companyId, 'products', String(p.id)), p);
+          }
         }
 
-        showAlert('Успех', 'Цены успешно обновлены из файла.');
+        let summary = 'Цены успешно обновлены.';
+        if (newProducts.length > 0) {
+          summary += ` Добавлено новых товаров: ${newProducts.length}.`;
+        }
+        showAlert('Успех', summary);
       } catch (err) {
         console.error(err);
         showAlert('Ошибка', 'Не удалось прочитать файл. Убедитесь, что используете правильный шаблон.');
@@ -1207,7 +1929,27 @@ const PriceView = ({
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <h2 className="text-2xl font-bold text-gray-800">Прайс-лист материалов</h2>
-        <div className="flex items-center gap-4 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
+          {onSave && (
+            <button 
+              onClick={async () => {
+                setIsSaving(true);
+                try {
+                  await onSave();
+                } finally {
+                  setIsSaving(false);
+                }
+              }}
+              disabled={isSaving}
+              className={cn(
+                "flex items-center gap-2 px-6 py-2 bg-blue-600 text-white font-black rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 text-sm",
+                isSaving && "opacity-70 cursor-not-allowed"
+              )}
+            >
+              <Save className={cn("w-4 h-4", isSaving && "animate-spin")} />
+              {isSaving ? 'Сохранение...' : 'Сохранить изменения'}
+            </button>
+          )}
           <button 
             onClick={exportToExcel}
             className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100 shadow-sm text-sm"
@@ -1231,6 +1973,9 @@ const PriceView = ({
             />
           </div>
         </div>
+        <p className="text-[10px] text-gray-500 mt-1 text-right">
+          * Добавляйте новые строки в файл для автоматического создания товаров.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
@@ -1272,17 +2017,38 @@ const PriceView = ({
       <div className="space-y-6">
         {categoriesToDisplay.filter(cat => expandedCategories.has(cat.title)).map(cat => (
           <div key={cat.title} className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex items-center gap-3 px-2">
-              <div className="h-px flex-1 bg-gray-100"></div>
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">{cat.title}</h3>
-              <div className="h-px flex-1 bg-gray-100"></div>
+            <div className="flex items-center justify-between px-2">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+                  <Package className="w-4 h-4 text-blue-600" />
+                </div>
+                <h4 className="text-lg font-bold text-gray-800">{cat.title}</h4>
+              </div>
+              {cat.title === 'Материалы' && (
+                <button
+                  onClick={() => {
+                    showPrompt('Новый бренд', 'Введите название нового бренда (например, Slotex)', '', (val) => {
+                      if (val) {
+                        setCatalogMaterials(prev => ({
+                          ...prev,
+                          [val]: []
+                        }));
+                      }
+                    });
+                  }}
+                  className="px-3 py-1.5 bg-blue-50 text-blue-600 text-xs font-bold rounded-lg hover:bg-blue-100 transition-all flex items-center gap-2"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Добавить бренд
+                </button>
+              )}
             </div>
             
             <div className="grid gap-4">
               {/* Brands/Materials */}
               {cat.brands.map(brand => {
                 const isServices = brand === 'Услуги';
-                const decors = isServices ? catalogServices.map(s => s.name) : (LDSP_DATABASE[brand as keyof typeof LDSP_DATABASE] || []);
+                const decors = isServices ? catalogServices.map(s => s.name) : (catalogMaterials[brand] || []);
                 const searchTerms = switchLayout(priceSearch);
                 const filtered = decors.filter(d => searchTerms.some(term => d.toLowerCase().includes(term)));
                 if (priceSearch && filtered.length === 0) return null;
@@ -1293,30 +2059,78 @@ const PriceView = ({
 
                 return (
                   <div key={brand} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                    <button 
-                      onClick={() => toggleBrand(brand)}
-                      className="w-full px-6 py-4 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
+                    <div className="w-full px-6 py-4 flex items-center justify-between bg-gray-50 border-b border-gray-100">
+                      <button 
+                        onClick={() => toggleBrand(brand)}
+                        className="flex-1 flex items-center gap-3 text-left hover:opacity-70 transition-opacity"
+                      >
                         {isServices ? <Wrench className="w-5 h-5 text-blue-600" /> : <Database className="w-5 h-5 text-blue-600" />}
-                        <span className="font-bold text-gray-800">{brand}</span>
-                        <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">{decors.length}</span>
-                      </div>
-                      {expandedBrands.has(brand) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                    </button>
+                        <span className="font-bold text-gray-700">{brand}</span>
+                        <span className="text-[10px] text-gray-400 font-medium uppercase bg-gray-100 px-2 py-0.5 rounded-full">{decors.length} декоров</span>
+                        {expandedBrands.has(brand) ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                      </button>
+                      
+                      {!isServices && isProduction && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              showPrompt(`Добавить декор в ${brand}`, 'Введите название нового декора', '', (val) => {
+                                if (val) {
+                                  setCatalogMaterials(prev => ({
+                                    ...prev,
+                                    [brand]: [...(prev[brand] || []), val]
+                                  }));
+                                }
+                              });
+                            }}
+                            className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition-all"
+                            title="Добавить декор"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                          <button
+                             onClick={() => {
+                               showConfirm('Удалить бренд', `Удалить бренд ${brand} и все его декоры?`, () => {
+                                 setCatalogMaterials(prev => {
+                                   const nx = { ...prev };
+                                   delete nx[brand];
+                                   return nx;
+                                 });
+                               });
+                             }}
+                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                             title="Удалить бренд"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     
                     {expandedBrands.has(brand) && (
-                      <div className="p-4">
+                      <div className="p-4 bg-white">
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                           {filtered.map(decor => {
-                            const service = isServices ? catalogServices.find(s => s.name === decor) : null;
-                            const unit = isServices ? service?.unit : (calcMode === 'area' ? 'м²' : 'лист');
                             const priceKey = isServices ? decor : `${brand}|${decor}`;
-                            
-                            return (
-                              <div key={decor} className="p-2 border border-gray-100 rounded-lg hover:border-blue-200 transition-colors group bg-white shadow-sm">
-                                <div className="text-[11px] font-bold text-gray-700 mb-1.5 truncate" title={decor}>{decor}</div>
-                                <div className="flex items-center gap-1.5">
+                             return (
+                              <div key={decor} className="p-2 border border-gray-100 rounded-lg hover:border-blue-200 transition-colors group bg-white shadow-sm relative">
+                                {!isServices && isProduction && (
+                                   <button 
+                                     onClick={() => {
+                                       showConfirm('Удалить декор', `Удалить декор "${decor}"?`, () => {
+                                         setCatalogMaterials(prev => ({
+                                           ...prev,
+                                           [brand]: prev[brand].filter(d => d !== decor)
+                                         }));
+                                       });
+                                     }}
+                                     className="absolute -top-2 -right-2 w-5 h-5 bg-white border border-gray-200 text-gray-400 hover:text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-sm z-10"
+                                   >
+                                     <X className="w-3 h-3" />
+                                   </button>
+                                )}
+                                <div className="text-[10px] font-bold text-gray-500 mb-1.5 truncate leading-tight" title={decor}>{decor}</div>
+                                <div className="flex items-center gap-1">
                                   <input 
                                     type="text" 
                                     inputMode="decimal"
@@ -1340,11 +2154,11 @@ const PriceView = ({
                                     placeholder="0"
                                     disabled={!canEdit}
                                     className={cn(
-                                      "w-full text-[11px] border-b border-gray-200 focus:border-blue-500 outline-none py-0.5 px-0.5 font-bold",
-                                      canEdit ? "group-hover:bg-blue-50/30 text-gray-900" : "bg-gray-50 text-gray-500 cursor-not-allowed"
+                                      "w-full text-xs border-b border-gray-100 focus:border-blue-500 outline-none py-0.5 px-0.5 font-bold transition-colors",
+                                      canEdit ? "group-hover:bg-blue-50/20 text-gray-900" : "bg-gray-50 text-gray-400 cursor-not-allowed"
                                     )}
                                   />
-                                  <span className="text-[9px] text-gray-400 whitespace-nowrap">₽/{unit}</span>
+                                  <span className="text-[9px] text-gray-400 font-bold">₽</span>
                                 </div>
                               </div>
                             );
@@ -1355,60 +2169,184 @@ const PriceView = ({
                   </div>
                 );
               })}
-
-              {/* Products in this category */}
-              {cat.products.length > 0 && (
-                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                  <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
-                    <ShoppingBag className="w-5 h-5 text-emerald-600" />
-                    <span className="font-bold text-gray-800">Товары категории</span>
-                    <span className="text-xs text-gray-500 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">{cat.products.length}</span>
-                  </div>
-                  <div className="p-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                      {cat.products
-                        .filter(p => {
-                          const searchTerms = switchLayout(priceSearch);
-                          return !priceSearch || searchTerms.some(term => p.name.toLowerCase().includes(term));
-                        })
-                        .map(product => (
-                        <div key={product.id} className="p-2 border border-gray-100 rounded-lg hover:border-emerald-200 transition-colors group bg-white shadow-sm">
-                          <div className="text-[11px] font-bold text-gray-700 mb-1.5 truncate" title={product.name}>{product.name}</div>
-                          <div className="flex items-center gap-1.5">
-                            <input 
-                              type="text" 
-                              inputMode="decimal"
-                              value={product.price || ''}
-                              onFocus={(e) => e.target.select()}
-                              onChange={async (e) => {
-                                const v = e.target.value.replace(',', '.');
-                                if (v === '' || /^\d*\.?\d*$/.test(v)) {
-                                  const newPrice = v === '' ? 0 : parseFloat(v);
-                                  // Update Firestore immediately
-                                  const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
-                                  if (companyId) {
-                                    await setDoc(doc(db, 'companies', companyId, 'products', String(product.id)), { price: newPrice }, { merge: true });
-                                  }
-                                }
-                              }}
-                              placeholder="0"
-                              className="w-full text-[11px] border-b border-gray-200 focus:border-emerald-500 outline-none py-0.5 px-0.5 font-bold group-hover:bg-emerald-50/30 text-gray-900"
-                            />
-                            <span className="text-[9px] text-gray-400 whitespace-nowrap">₽/{product.unit || 'шт'}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {cat.brands.length === 0 && cat.products.length === 0 && (
-                <div className="p-8 text-center bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
-                  <p className="text-gray-400 text-sm">В этом разделе пока нет элементов</p>
-                </div>
-              )}
             </div>
+
+            {/* Products in this category */}
+            {cat.products.length > 0 && cat.title !== 'Фасады заказные' && (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm mt-4">
+                <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
+                  <ShoppingBag className="w-5 h-5 text-emerald-600" />
+                  <span className="font-bold text-gray-800">Товары категории</span>
+                  <span className="text-xs text-gray-500 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">{cat.products.length}</span>
+                </div>
+                <div className="p-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                    {cat.products
+                      .filter(p => {
+                        const searchTerms = switchLayout(priceSearch);
+                        return !priceSearch || searchTerms.some(term => p.name.toLowerCase().includes(term));
+                      })
+                      .map(product => (
+                      <div key={product.id} className="p-2 border border-gray-100 rounded-lg hover:border-emerald-200 transition-colors group bg-white shadow-sm">
+                        <div className="text-[11px] font-bold text-gray-700 mb-1.5 truncate" title={product.name}>{product.name}</div>
+                        <div className="flex items-center gap-1.5">
+                          <input 
+                            type="text" 
+                            inputMode="decimal"
+                            value={product.price || ''}
+                            onFocus={(e) => e.target.select()}
+                            onChange={async (e) => {
+                              const v = e.target.value.replace(',', '.');
+                              if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                const newPrice = v === '' ? 0 : parseFloat(v);
+                                const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
+                                if (companyId) {
+                                  await setDoc(doc(db, 'companies', companyId, 'products', String(product.id)), { price: newPrice }, { merge: true });
+                                }
+                              }
+                            }}
+                            placeholder="0"
+                            className="w-full text-[11px] border-b border-gray-200 focus:border-emerald-500 outline-none py-0.5 px-0.5 font-bold group-hover:bg-emerald-50/30 text-gray-900"
+                          />
+                          <span className="text-[9px] text-gray-400 whitespace-nowrap">₽/{product.unit || 'шт'}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {cat.title === 'Фасады заказные' && isProduction && (
+               <div className="space-y-8 animate-in fade-in duration-500 pt-6 border-t border-gray-100">
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={() => {
+                        showPrompt('Новый тип фасадов', 'Введите название (напр. Пленка со спецэффектом):', '', (name) => {
+                          if (name) {
+                            showPrompt('Толщины', 'Введите доступные толщины через запятую (напр. 16, 19, 22):', '16, 19, 22', (thicknessStr) => {
+                              const thicknesses = thicknessStr.split(',').map(t => t.trim()).filter(t => t);
+                              const id = 'facade_' + Date.now();
+                              setOwnProductionConfig(prev => ({
+                                ...prev,
+                                extraFacadeTypes: [
+                                  ...(prev.extraFacadeTypes || []),
+                                  {
+                                    id,
+                                    name: id,
+                                    displayName: name,
+                                    thicknesses: thicknesses.length > 0 ? thicknesses : ['16', '19', '22'],
+                                    settings: { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }
+                                  }
+                                ]
+                              }));
+                            });
+                          }
+                        });
+                      }}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Добавить тип фасадов
+                    </button>
+                  </div>
+
+                  <FacadePriceGrid 
+                    title={ownProductionConfig.facadeSettings?.displayName || "Пленка"}
+                    icon={TableProperties}
+                    settings={ownProductionConfig.facadeSettings}
+                    surchargeThicknesses={ownProductionConfig.facadeSettings?.thicknesses || ['16', '19', '22']}
+                    onUpdateThicknesses={(newThicknesses) => {
+                      setOwnProductionConfig(prev => ({
+                        ...prev,
+                        facadeSettings: { ...(prev.facadeSettings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }), thicknesses: newThicknesses }
+                      }));
+                    }}
+                    onUpdate={(updater) => {
+                       setOwnProductionConfig(prev => ({
+                           ...prev,
+                           facadeSettings: updater(prev.facadeSettings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} })
+                       }));
+                    }}
+                    onUpdateTitle={(newTitle) => {
+                      setOwnProductionConfig(prev => ({
+                        ...prev,
+                        facadeSettings: { ...(prev.facadeSettings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }), displayName: newTitle }
+                      }));
+                    }}
+                    showConfirm={showConfirm}
+                  />
+
+                  <FacadePriceGrid 
+                    title={ownProductionConfig.enamelSettings?.displayName || "Эмаль"}
+                    icon={TableProperties}
+                    settings={ownProductionConfig.enamelSettings}
+                    surchargeThicknesses={ownProductionConfig.enamelSettings?.thicknesses || ['16', '19', '22']}
+                    onUpdateThicknesses={(newThicknesses) => {
+                      setOwnProductionConfig(prev => ({
+                        ...prev,
+                        enamelSettings: { ...(prev.enamelSettings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }), thicknesses: newThicknesses }
+                      }));
+                    }}
+                    onUpdate={(updater) => {
+                       setOwnProductionConfig(prev => ({
+                           ...prev,
+                           enamelSettings: updater(prev.enamelSettings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} })
+                       }));
+                    }}
+                    onUpdateTitle={(newTitle) => {
+                      setOwnProductionConfig(prev => ({
+                        ...prev,
+                        enamelSettings: { ...(prev.enamelSettings || { categories: [], millings: [], thicknessPrices: {}, priceGrid: {}, thicknessGrid: {} }), displayName: newTitle }
+                      }));
+                    }}
+                    showConfirm={showConfirm}
+                  />
+
+                  {ownProductionConfig.extraFacadeTypes?.map((extraType) => (
+                    <FacadePriceGrid 
+                      key={extraType.id}
+                      title={extraType.displayName}
+                      icon={TableProperties}
+                      settings={extraType.settings}
+                      surchargeThicknesses={extraType.thicknesses}
+                      onUpdateThicknesses={(newThicknesses) => {
+                        setOwnProductionConfig(prev => ({
+                          ...prev,
+                          extraFacadeTypes: prev.extraFacadeTypes?.map(t => 
+                            t.id === extraType.id ? { ...t, thicknesses: newThicknesses } : t
+                          )
+                        }));
+                      }}
+                      onUpdate={(updater) => {
+                        setOwnProductionConfig(prev => ({
+                          ...prev,
+                          extraFacadeTypes: prev.extraFacadeTypes?.map(t => 
+                            t.id === extraType.id ? { ...t, settings: updater(t.settings) } : t
+                          )
+                        }));
+                      }}
+                      onUpdateTitle={(newTitle) => {
+                        setOwnProductionConfig(prev => ({
+                          ...prev,
+                          extraFacadeTypes: prev.extraFacadeTypes?.map(t => 
+                            t.id === extraType.id ? { ...t, displayName: newTitle } : t
+                          )
+                        }));
+                      }}
+                      onRemove={() => {
+                        showConfirm('Удалить тип', `Удалить тип фасадов "${extraType.displayName}"?`, () => {
+                          setOwnProductionConfig(prev => ({
+                            ...prev,
+                            extraFacadeTypes: prev.extraFacadeTypes?.filter(t => t.id !== extraType.id)
+                          }));
+                        });
+                      }}
+                      showConfirm={showConfirm}
+                    />
+                  ))}
+               </div>
+            )}
           </div>
         ))}
       </div>
@@ -1503,8 +2441,8 @@ const CalculatorView = ({
   toggleDetailRotation: (key: string, detailId: string) => void;
   edgeThickness: Record<string, string>;
   setEdgeThickness: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  facadeCustomType: Record<string, 'Пленка' | 'Эмаль' | 'AGT SUPRAMATT PUR' | 'EVOSOFT PUR'>;
-  setFacadeCustomType: React.Dispatch<React.SetStateAction<Record<string, 'Пленка' | 'Эмаль' | 'AGT SUPRAMATT PUR' | 'EVOSOFT PUR'>>>;
+  facadeCustomType: Record<string, string>;
+  setFacadeCustomType: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   facadeCategory: Record<string, string>;
   setFacadeCategory: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   facadeMilling: Record<string, string>;
@@ -1734,35 +2672,54 @@ const CalculatorView = ({
                           <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
                             {item.type === 'ХДФ' ? 'Тип плиты' : 'Бренд плиты'}
                           </label>
-                          <select 
-                            value={sheetConfigs[key]?.name || ''}
-                            onChange={(e) => {
-                              if (item.type === 'ХДФ') {
-                                updateSheetConfig(key, { 
-                                  name: e.target.value, 
-                                  width: sheetConfigs[key]?.width || 2800, 
-                                  height: sheetConfigs[key]?.height || 2070 
-                                });
-                              } else {
-                                const brand = LDSP_BRANDS.find(b => b.name.includes(e.target.value));
-                                if (brand) updateSheetConfig(key, brand);
-                              }
-                            }}
-                            className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600"
-                          >
-                            {item.type === 'ХДФ' ? (
-                              <>
-                                <option value="">Выберите тип...</option>
-                                <option value="ХДФ">ХДФ</option>
-                                <option value="ДВП">ДВП</option>
-                              </>
-                            ) : (
-                              <>
-                                <option value="">Выберите бренд...</option>
-                                {LDSP_BRANDS.map(b => <option key={b.name} value={b.name}>{b.name.split(' ')[0]}</option>)}
-                              </>
-                            )}
-                          </select>
+                            <select 
+                              value={sheetConfigs[key]?.name || ''}
+                              onChange={(e) => {
+                                if (item.type === 'ХДФ') {
+                                  updateSheetConfig(key, { 
+                                    name: e.target.value, 
+                                    width: sheetConfigs[key]?.width || 2800, 
+                                    height: sheetConfigs[key]?.height || 2070 
+                                  });
+                                } else {
+                                  const brandConfig = (productionFormat === 'contract' && productionSettings?.production) 
+                                    ? productionSettings.production.ldspBrands 
+                                    : ownProductionConfig.ldspBrands;
+                                  const brand = brandConfig?.find((b: any) => b.brand === e.target.value);
+                                   if (brand) {
+                                     const cleanFormat = brand.format.toLowerCase().replace(/\s/g, '').replace('х', 'x');
+                                     const [w, h] = cleanFormat.split('x').map((v: string) => parseInt(v));
+                                     updateSheetConfig(key, { 
+                                       name: brand.brand, 
+                                       width: isNaN(w) ? 2800 : w, 
+                                       height: isNaN(h) ? 2070 : h 
+                                     });
+                                   } else {
+                                    const legacyBrand = LDSP_BRANDS.find(b => b.name.includes(e.target.value));
+                                    if (legacyBrand) updateSheetConfig(key, legacyBrand);
+                                  }
+                                }
+                              }}
+                              className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600"
+                            >
+                              {item.type === 'ХДФ' ? (
+                                <>
+                                  <option value="">Выберите тип...</option>
+                                  <option value="ХДФ">ХДФ</option>
+                                  <option value="ДВП">ДВП</option>
+                                </>
+                              ) : (
+                                <>
+                                  <option value="">Выберите бренд...</option>
+                                  {((productionFormat === 'contract' && productionSettings?.production) 
+                                    ? productionSettings.production.ldspBrands 
+                                    : ownProductionConfig.ldspBrands)?.map((b: any) => (
+                                    <option key={b.brand} value={b.brand}>{b.brand}</option>
+                                  ))}
+                                  {LDSP_BRANDS.map(b => <option key={b.name} value={b.name}>{b.name.split(' ')[0]}</option>)}
+                                </>
+                              )}
+                            </select>
                           <div className="mt-2 flex items-center gap-1">
                             <input 
                               type="number"
@@ -1823,6 +2780,10 @@ const CalculatorView = ({
               <div className="grid gap-4">
                 {Object.keys(results).filter(key => results[key].type === 'Фасад').map(key => {
                   const item = results[key];
+                  const configToUse = (productionFormat === 'contract' && productionSettings?.production) 
+                    ? productionSettings.production 
+                    : ownProductionConfig;
+                    
                   return (
                     <div key={key} className="p-4 bg-white border border-gray-200 rounded-xl shadow-sm space-y-4">
                       <div className="flex items-center justify-between">
@@ -2022,17 +2983,26 @@ const CalculatorView = ({
                               <select 
                                 value={facadeCustomType[key] || ''}
                                 onChange={(e) => {
-                                  const val = e.target.value as any;
+                                  const val = e.target.value;
                                   setFacadeCustomType(prev => ({ ...prev, [key]: val }));
                                   if (val === 'AGT SUPRAMATT PUR' || val === 'EVOSOFT PUR') {
                                     setFacadeThicknessOverride(prev => ({ ...prev, [key]: '18' }));
+                                  } else {
+                                    // Set default thickness for extra types if found
+                                    const extra = ownProductionConfig.extraFacadeTypes?.find(t => t.displayName === val);
+                                    if (extra && extra.thicknesses.length > 0) {
+                                      setFacadeThicknessOverride(prev => ({ ...prev, [key]: extra.thicknesses[0] }));
+                                    }
                                   }
                                 }}
-                                className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium"
                               >
                                 <option value="">Выберите тип...</option>
-                                <option value="Пленка">Пленка</option>
-                                <option value="Эмаль">Эмаль</option>
+                                <option value={ownProductionConfig.facadeSettings?.displayName || "Пленка"}>{ownProductionConfig.facadeSettings?.displayName || "Пленка"}</option>
+                                <option value={ownProductionConfig.enamelSettings?.displayName || "Эмаль"}>{ownProductionConfig.enamelSettings?.displayName || "Эмаль"}</option>
+                                {ownProductionConfig.extraFacadeTypes?.map(t => (
+                                  <option key={t.id} value={t.displayName}>{t.displayName}</option>
+                                ))}
                                 <option value="AGT SUPRAMATT PUR">AGT SUPRAMATT PUR</option>
                                 <option value="EVOSOFT PUR">EVOSOFT PUR</option>
                               </select>
@@ -2045,46 +3015,82 @@ const CalculatorView = ({
                                 </div>
                               ) : (
                                 <select 
-                                  value={facadeThicknessOverride[key] || '16'}
+                                  value={facadeThicknessOverride[key] || (ownProductionConfig.extraFacadeTypes?.find(t => t.displayName === facadeCustomType[key])?.thicknesses[0] || '16')}
                                   onChange={(e) => setFacadeThicknessOverride(prev => ({ ...prev, [key]: e.target.value }))}
-                                  className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                  className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium"
                                 >
-                                  <option value="16">16 мм</option>
-                                  <option value="19">19 мм</option>
-                                  <option value="22">22 мм</option>
+                                  {(() => {
+                                    const extra = ownProductionConfig.extraFacadeTypes?.find(t => t.displayName === facadeCustomType[key]);
+                                    if (extra) {
+                                      return extra.thicknesses.map(t => (
+                                        <option key={t} value={t}>{t} мм</option>
+                                      ));
+                                    }
+                                    return (
+                                      <>
+                                        <option value="16">16 мм</option>
+                                        <option value="19">19 мм</option>
+                                        <option value="22">22 мм</option>
+                                      </>
+                                    );
+                                  })()}
                                 </select>
                               )}
                             </div>
                           </div>
 
-                          {facadeCustomType[key] === 'Пленка' && (
+                          {(facadeCustomType[key] === (ownProductionConfig.facadeSettings?.displayName || 'Пленка') || 
+                            facadeCustomType[key] === (ownProductionConfig.enamelSettings?.displayName || 'Эмаль') ||
+                            ownProductionConfig.extraFacadeTypes?.some(t => t.displayName === facadeCustomType[key])) && (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div>
-                                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Категория</label>
-                                <select 
-                                  value={facadeCategory[key] || ''}
-                                  onChange={(e) => setFacadeCategory(prev => ({ ...prev, [key]: e.target.value }))}
-                                  className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                                >
-                                  <option value="">Выберите категорию...</option>
-                                  {[1, 2, 3, 4, 5].map(c => <option key={c} value={`Категория ${c}`}>Категория {c}</option>)}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Фрезеровка</label>
-                                <select 
-                                  value={facadeMilling[key] || ''}
-                                  onChange={(e) => setFacadeMilling(prev => ({ ...prev, [key]: e.target.value }))}
-                                  className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                                >
-                                  <option value="">Выберите фрезеровку...</option>
-                                  <option value="Мыло">Мыло</option>
-                                  <option value="Фрезеровка ТИП 1">Фрезеровка ТИП 1</option>
-                                  <option value="Фрезеровка ТИП 2">Фрезеровка ТИП 2</option>
-                                  <option value="Фрезеровка ТИП 3">Фрезеровка ТИП 3</option>
-                                  <option value="Фрезеровка ТИП 4">Фрезеровка ТИП 4</option>
-                                </select>
-                              </div>
+                               {(() => {
+                                 let settings = null;
+                                 if (facadeCustomType[key] === (ownProductionConfig.enamelSettings?.displayName || 'Эмаль')) {
+                                   settings = configToUse.enamelSettings;
+                                 } else if (facadeCustomType[key] === (ownProductionConfig.facadeSettings?.displayName || 'Пленка')) {
+                                   settings = configToUse.facadeSettings;
+                                 } else {
+                                   settings = configToUse.extraFacadeTypes?.find(t => t.displayName === facadeCustomType[key])?.settings;
+                                 }
+                                 return (
+                                   <>
+                                     <div>
+                                       <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Категория</label>
+                                       <select 
+                                         value={facadeCategory[key] || ''}
+                                         onChange={(e) => setFacadeCategory(prev => ({ ...prev, [key]: e.target.value }))}
+                                         className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                       >
+                                         <option value="">Выберите категорию...</option>
+                                         {settings?.categories?.map((c: any) => (
+                                           <option key={c.id} value={c.id}>{c.name}</option>
+                                         ))}
+                                         {!settings?.categories?.length && [1, 2, 3, 4, 5].map(c => (
+                                           <option key={c} value={`Категория ${c}`}>Категория {c}</option>
+                                         ))}
+                                       </select>
+                                     </div>
+                                     <div>
+                                       <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Фрезеровка</label>
+                                       <select 
+                                         value={facadeMilling[key] || ''}
+                                         onChange={(e) => setFacadeMilling(prev => ({ ...prev, [key]: e.target.value }))}
+                                         className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                       >
+                                         <option value="">Выберите фрезеровку...</option>
+                                         {settings?.millings?.map((m: any) => (
+                                           <option key={m.id} value={m.id}>{m.name}</option>
+                                         ))}
+                                         {!settings?.millings?.length && [
+                                           "Мыло", "Фрезеровка ТИП 1", "Фрезеровка ТИП 2", "Фрезеровка ТИП 3", "Фрезеровка ТИП 4"
+                                         ].map(m => (
+                                           <option key={m} value={m}>{m}</option>
+                                         ))}
+                                       </select>
+                                     </div>
+                                   </>
+                                 );
+                               })()}
                             </div>
                           )}
 
@@ -2758,6 +3764,9 @@ const SummaryView = ({
   canEditDelivery,
   customerType,
   setCustomerType,
+  selectedSalonId,
+  setSelectedSalonId,
+  salonsUsingMe = [],
   isProduction,
   ownProductionConfig,
   productionFormat,
@@ -2778,7 +3787,10 @@ const SummaryView = ({
   removeAddedProduct,
   setActiveTab,
   showAlert,
-  showConfirm
+  showConfirm,
+  catalogMaterials,
+  resolveBrandCoefficient,
+  onSummaryCalculated
 }: { 
   results: any; 
   selectedDecor: Record<string, string>; 
@@ -2797,7 +3809,7 @@ const SummaryView = ({
   edgeThickness: Record<string, string>; 
   edgeDecor: Record<string, string>; 
   setPrices: React.Dispatch<React.SetStateAction<Record<string, number>>>;
-  facadeCustomType: Record<string, 'Пленка' | 'Эмаль' | 'AGT SUPRAMATT PUR' | 'EVOSOFT PUR'>;
+  facadeCustomType: Record<string, string>;
   facadeCategory: Record<string, string>;
   facadeMilling: Record<string, string>;
   facadeThicknessOverride: Record<string, string>;
@@ -2814,6 +3826,9 @@ const SummaryView = ({
   canEditDelivery: boolean;
   customerType: 'retail' | 'wholesale' | 'designer';
   setCustomerType: (type: 'retail' | 'wholesale' | 'designer') => void;
+  selectedSalonId?: string;
+  setSelectedSalonId?: (id: string) => void;
+  salonsUsingMe?: any[];
   isProduction: boolean;
   ownProductionConfig: OwnProductionConfig;
   productionFormat: ProductionFormat;
@@ -2835,6 +3850,9 @@ const SummaryView = ({
   setActiveTab: (tab: any) => void;
   showAlert: (title: string, message: string) => void;
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
+  catalogMaterials: Record<string, string[]>;
+  resolveBrandCoefficient: (categoryId: string, brand: string) => number;
+  onSummaryCalculated?: (total: number) => void;
 }) => {
   const [activeWorktopForCut, setActiveWorktopForCut] = useState<any | null>(null);
   
@@ -2874,9 +3892,15 @@ const SummaryView = ({
     const isCustomFacade = item.type === 'Фасад' && facadeType[key] === 'custom';
     const isSheetFacade = item.type === 'Фасад' && (facadeType[key] || 'sheet') === 'sheet';
     
+    const itemsInDecor = typeof decor === 'string' ? decor.split('|') : [];
+    const brand = itemsInDecor[0] || '';
+
     let itemCost = 0;
     let qtyText = '';
-    let coef = coefficients[item.type === 'ХДФ' ? 'hdf' : (isSheetFacade ? 'facadeSheet' : 'ldsp')] || 1;
+    let coef = 1;
+    if (item.type === 'ЛДСП' || item.type === 'МДФ') coef = resolveBrandCoefficient('ldsp', brand);
+    else if (item.type === 'ХДФ') coef = resolveBrandCoefficient('hdf', brand);
+    else if (isSheetFacade) coef = resolveBrandCoefficient('facadeSheet', brand);
 
     // Collate details for merged materials
     const combinedDetails = [...item.details];
@@ -2892,8 +3916,45 @@ const SummaryView = ({
       const milling = facadeMilling[key] || '';
       const thickness = facadeThicknessOverride[key] || item.thickness;
       
-      itemCost = item.area * price;
-      qtyText = `${item.area.toFixed(2)} м²`;
+      // Calculate base price from grid
+      let basePrice = 0;
+      let settings = null;
+      if (customType === (configToUse.enamelSettings?.displayName || 'Эмаль')) {
+        settings = configToUse.enamelSettings;
+      } else if (customType === (configToUse.facadeSettings?.displayName || 'Пленка')) {
+        settings = configToUse.facadeSettings;
+      } else {
+        settings = configToUse.extraFacadeTypes?.find((t: any) => t.displayName === customType)?.settings;
+      }
+      
+      if (settings) {
+        const matchingCat = settings.categories?.find((c: any) => c.name === category || c.id === category);
+        const matchingMill = settings.millings?.find((m: any) => m.name === milling || m.id === milling);
+        
+          if (matchingCat && matchingMill) {
+            const gridKey = `${matchingCat.id}:${matchingMill.id}`;
+            basePrice = settings.priceGrid?.[gridKey] || 0;
+            
+            // Add thickness surcharge
+            const thickKey = `${thickness}:${matchingMill.id}`;
+            basePrice += (settings.thicknessGrid?.[thickKey] || 0);
+          }
+        }
+
+      // If we found a base price in the grid, use it. Otherwise fallback to the manually entered price.
+      const rawPrice = basePrice > 0 ? basePrice : price;
+      const facadeCoef = resolveBrandCoefficient('facadeCustom', brand);
+      
+      // APPLY MIN VOLUME CHECK
+      const actualArea = item.area;
+      const minVol = settings?.minOrderVolume || 0;
+      const calculatedArea = actualArea < minVol ? minVol : actualArea;
+      
+      itemCost = calculatedArea * rawPrice * facadeCoef;
+      qtyText = `${calculatedArea.toFixed(2)} м²${actualArea < minVol ? ' (мин.)' : ''}`;
+      
+      // Always show selling price (with coefficient) in the summary table to avoid confusion with the total
+      const displayPrice = Math.round(rawPrice * facadeCoef);
 
       rows.push({
         type: 'material',
@@ -2901,13 +3962,13 @@ const SummaryView = ({
         sub: `${thickness} мм${category ? `, ${category}` : ''}${milling ? `, ${milling}` : ''}`,
         decor: decor || 'Не выбран',
         qty: qtyText,
-        price: price,
-        rawPrice: price,
+        price: displayPrice,
+        rawPrice: rawPrice,
         priceKey: priceKey,
         total: Math.round(itemCost),
-        coef: 1,
+        coef: facadeCoef,
         key: key,
-        isManual: isManualMaterial
+        isManual: isManualMaterial && basePrice === 0
       });
     } else {
       const sheetW = (sheetConfigs[key]?.width || 2800) - (trimming * 2);
@@ -2927,8 +3988,8 @@ const SummaryView = ({
       }
       qtyText = `${sheetCount} л.`;
 
-      const showPurchasePrice = userRole === 'admin' || companyType === 'Дизайнер';
-      const displayPrice = showPurchasePrice ? price : Math.round(price * coef);
+      // Always show selling price (with coefficient) in the summary table to avoid confusion with the total
+      const displayPrice = Math.round(price * coef);
 
       rows.push({
         type: 'material',
@@ -3006,7 +4067,10 @@ const SummaryView = ({
       const thickness = isFacade ? '1.0' : (edgeThickness[ck] || '0.4');
       const decor = edgeDecor[ck] || 'Не указан';
       const price = edgePrices[ck] || 0;
-      const coef = coefficients.edge || 1.5;
+      
+      const itemsInBoardDecor = typeof selectedDecor[ck] === 'string' ? selectedDecor[ck].split('|') : [];
+      const boardBrand = itemsInBoardDecor[0] || '';
+      const coef = resolveBrandCoefficient('edge', boardBrand);
 
       const groupKey = `${thickness}|${decor}`;
 
@@ -3046,7 +4110,7 @@ const SummaryView = ({
     Object.values(edgeGroups).forEach(group => {
       const edgeLenRounded = Math.ceil(group.totalLength);
       const brandStr = selectedDecor[group.key] || '';
-      const brandName = Object.keys(LDSP_DATABASE).find(b => brandStr.startsWith(b)) || '';
+      const brandName = Object.keys(catalogMaterials).find(b => brandStr.startsWith(b)) || '';
       const thickness = group.thickness;
 
       
@@ -3273,32 +4337,32 @@ const SummaryView = ({
     // Add Delivery Fee if enabled
     if (serviceData.delivery) {
       const deliveryCoef = currentCoefficients.delivery || 1.5;
-      let deliveryFee = deliveryTariffs.basePrice;
+      let deliveryFee = deliveryTariffs?.basePrice || 0;
       
-      if (serviceData.distance > deliveryTariffs.baseDistance) {
-        deliveryFee += (serviceData.distance - deliveryTariffs.baseDistance) * deliveryTariffs.extraKmPrice;
+      if (serviceData.distance > (deliveryTariffs?.baseDistance || 0)) {
+        deliveryFee += (serviceData.distance - (deliveryTariffs?.baseDistance || 0)) * (deliveryTariffs?.extraKmPrice || 0);
       }
   
       // Calculate total volume (rough estimation based on sheets)
       const totalVolume = totalLdspSheets * 0.1; // Assuming 0.1m3 per sheet
-      if (totalVolume > deliveryTariffs.baseVolume) {
-        deliveryFee += (totalVolume - deliveryTariffs.baseVolume) * deliveryTariffs.extraVolumePrice;
+      if (totalVolume > (deliveryTariffs?.baseVolume || 0)) {
+        deliveryFee += (totalVolume - (deliveryTariffs?.baseVolume || 0)) * (deliveryTariffs?.extraVolumePrice || 0);
       }
   
       // NEW: Loading/Lift calculation
-      let loadingFee = deliveryTariffs.loadingBase;
+      let loadingFee = deliveryTariffs?.loadingBase || 0;
       const floor = parseInt(serviceData.address.floor) || 0;
       if (floor > 1) {
         if (serviceData.address.elevator === 'none') {
-          loadingFee += (floor - 1) * deliveryTariffs.floorPrice;
+          loadingFee += (floor - 1) * (deliveryTariffs?.floorPrice || 0);
         } else {
-          loadingFee += deliveryTariffs.elevatorPrice;
+          loadingFee += (deliveryTariffs?.elevatorPrice || 0);
         }
       }
       deliveryFee += loadingFee;
 
       if (serviceData.extraLoader) {
-        deliveryFee += deliveryTariffs.extraLoaderPrice;
+        deliveryFee += (deliveryTariffs?.extraLoaderPrice || 0);
       }
   
       const finalDeliveryFee = Math.round(deliveryFee * deliveryCoef);
@@ -3356,6 +4420,12 @@ const SummaryView = ({
 
   const finalTotal = allDataEntered ? Math.round(totalCost) : 0;
 
+  useEffect(() => {
+    if (onSummaryCalculated) {
+      onSummaryCalculated(finalTotal);
+    }
+  }, [finalTotal, onSummaryCalculated]);
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
       {isProduction && (
@@ -3393,6 +4463,22 @@ const SummaryView = ({
               Дизайнер
             </button>
           </div>
+          
+          {isProduction && customerType === 'wholesale' && salonsUsingMe.length > 0 && setSelectedSalonId && (
+            <div className="flex items-center gap-3 ml-6 pl-6 border-l border-gray-200">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Выбрать салон:</span>
+              <select 
+                value={selectedSalonId}
+                onChange={(e) => setSelectedSalonId(e.target.value)}
+                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[180px]"
+              >
+                <option value="">Стандартные (салоны)</option>
+                {salonsUsingMe.map(salon => (
+                  <option key={salon.id} value={salon.id}>{salon.name || 'Без названия'}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
 
@@ -3570,7 +4656,7 @@ const SummaryView = ({
                     <div className="pl-6">
                       <input 
                         type="text"
-                        value={gluedEdgeDecor[row.key!] || row.decor}
+                        value={gluedEdgeDecor[row.key!] || row.decor || ''}
                         onChange={(e) => setGluedEdgeDecor(prev => ({ ...prev, [row.key!]: e.target.value }))}
                         placeholder="Декор склейки..."
                         className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none"
@@ -3905,7 +4991,11 @@ const SettingsView = ({
   handleRemoveLdspBrand,
   handleToggleUnavailableThickness,
   assemblyIncludes,
-  setAssemblyIncludes
+  setAssemblyIncludes,
+  setOwnProductionConfig,
+  catalogMaterials,
+  catalogServices,
+  catalogProducts
 }: { 
   coefficients: { retail: any, wholesale: any, designer: any }; 
   setCoefficients: React.Dispatch<React.SetStateAction<{ retail: any, wholesale: any, designer: any }>>; 
@@ -3940,6 +5030,7 @@ const SettingsView = ({
   updateStandardCoefficient: (cat: string, val: string) => void;
   updateSalonCoefficient: (salonId: string, cat: string, val: string) => void;
   ownProductionConfig: OwnProductionConfig;
+  setOwnProductionConfig: React.Dispatch<React.SetStateAction<OwnProductionConfig>>;
   companyInfo: any;
   setCompanyInfo: React.Dispatch<React.SetStateAction<any>>;
   showAlert: (title: string, message: string) => void;
@@ -3950,9 +5041,107 @@ const SettingsView = ({
   handleToggleUnavailableThickness: (brandId: string, thickness: string) => void;
   assemblyIncludes: string[];
   setAssemblyIncludes: React.Dispatch<React.SetStateAction<string[]>>;
+  catalogMaterials: Record<string, string[]>;
+  catalogServices: any[];
+  catalogProducts: any[];
 }) => {
   const [newCategory, setNewCategory] = useState('');
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'services' | 'production' | 'account'>('general');
+  const [activeSubTab, setActiveSubTab] = useState<'general' | 'services' | 'production' | 'account' | 'facades'>('general');
+  const [showBrandCoeffModal, setShowBrandCoeffModal] = useState(false);
+  const [brandCoeffForm, setBrandCoeffForm] = useState({ categoryId: 'ldsp', brand: '', retail: 1.5, wholesale: 1.2, designer: 1.3, standardSalon: 1.2 });
+
+  const categories = [
+    { id: 'ldsp', label: 'ЛДСП / МДФ' },
+    { id: 'hdf', label: 'ДВП / ХДФ' },
+    { id: 'edge', label: 'Кромка' },
+    { id: 'facadeSheet', label: 'Фасад (плита)' },
+    { id: 'facadeCustom', label: 'Фасад (заказной)' },
+    { id: 'hardware', label: 'Фурнитура' },
+    ...productCategories.map(cat => ({ id: `cat_${cat}`, label: cat }))
+  ];
+
+  const getBrandsForCategory = (catId: string) => {
+    if (catId === 'ldsp' || catId === 'hdf' || catId === 'facadeSheet') {
+      const typeMap: Record<string, string> = { 'ldsp': 'ЛДСП', 'hdf': 'ХДФ', 'facadeSheet': 'ЛДСП' };
+      const configBrands = ownProductionConfig.ldspBrands
+        .filter(b => b.type === typeMap[catId])
+        .map(b => b.brand);
+      
+      // Also check catalogMaterials for traditional brands of these types
+      const materialBrands = Object.keys(catalogMaterials).filter(brand => {
+        const lowerBrand = brand.toLowerCase();
+        if (catId === 'ldsp') return !lowerBrand.includes('кромка') && !lowerBrand.includes('edge');
+        if (catId === 'hdf') return lowerBrand.includes('двп') || lowerBrand.includes('хдф');
+        return true;
+      });
+
+      return Array.from(new Set([...configBrands, ...materialBrands]));
+    }
+    if (catId === 'edge') {
+      const configBrands = ownProductionConfig.ldspBrands.map(b => b.brand);
+      const materialBrands = Object.keys(catalogMaterials).filter(b => 
+        b.toLowerCase().includes('кромка') || b.toLowerCase().includes('edge') || b.toLowerCase().includes('пвх')
+      );
+      return Array.from(new Set([...configBrands, ...materialBrands]));
+    }
+    if (catId === 'facadeCustom') {
+       const brands = [];
+       if (ownProductionConfig.facadeSettings?.displayName) brands.push(ownProductionConfig.facadeSettings.displayName);
+       if (ownProductionConfig.enamelSettings?.displayName) brands.push(ownProductionConfig.enamelSettings.displayName);
+       ownProductionConfig.extraFacadeTypes?.forEach(t => brands.push(t.displayName));
+       return brands;
+    }
+    
+    // For other categories, gather brands from catalogProducts
+    const catLabel = categories.find(c => c.id === catId)?.label;
+    if (catLabel) {
+      const productBrands = catalogProducts
+        .filter(p => p.category === catLabel && p.brand)
+        .map(p => p.brand);
+      return Array.from(new Set(productBrands));
+    }
+    
+    return [];
+  };
+
+  const availableBrands = useMemo(() => Array.from(new Set(getBrandsForCategory(brandCoeffForm.categoryId))).filter(b => b), [brandCoeffForm.categoryId, ownProductionConfig, catalogMaterials]);
+
+  const handleAddBrandCoefficient = () => {
+    if (!brandCoeffForm.brand) {
+      showAlert('Ошибка', 'Выберите бренд');
+      return;
+    }
+    const newCoeff: BrandCoefficient = {
+      id: Math.random().toString(36).substr(2, 9),
+      ...brandCoeffForm
+    };
+    setOwnProductionConfig(prev => ({
+      ...prev,
+      brandCoefficients: [...(prev.brandCoefficients || []), newCoeff]
+    }));
+    setShowBrandCoeffModal(false);
+  };
+
+  const handleRemoveBrandCoefficient = (id: string) => {
+    setOwnProductionConfig(prev => ({
+      ...prev,
+      brandCoefficients: prev.brandCoefficients?.filter(c => c.id !== id)
+    }));
+  };
+
+  const updateBrandCoeff = (id: string, field: string, value: number) => {
+    setOwnProductionConfig(prev => ({
+      ...prev,
+      brandCoefficients: prev.brandCoefficients?.map(c => c.id === id ? { ...c, [field]: value } : c)
+    }));
+  };
+
+  const updateBrandSalonCoeff = (id: string, salonId: string, value: number) => {
+    setOwnProductionConfig(prev => ({
+      ...prev,
+      brandCoefficients: prev.brandCoefficients?.map(c => c.id === id ? { ...c, salonCoeffs: { ...(c.salonCoeffs || {}), [salonId]: value } } : c)
+    }));
+  };
 
   const isContract = productionFormat === 'contract';
   const isProduction = companyType === 'Мебельное производство';
@@ -4218,30 +5407,39 @@ const SettingsView = ({
                       <div className="space-y-1">
                         <label className="text-[10px] text-gray-400 uppercase font-bold">Моя розница (x)</label>
                         <input 
-                          type="number" 
+                          type="text" 
                           step="0.1"
-                          value={coefficients.retail[item.id]}
-                          onChange={(e) => updateCoeff('retail', item.id, parseFloat(e.target.value) || 0)}
+                          value={coefficients.retail[item.id] === 0 ? '' : coefficients.retail[item.id]}
+                          onChange={(e) => {
+                             const val = e.target.value.replace(/[^0-9.]/g, '');
+                             updateCoeff('retail', item.id, val === '' ? 0 : parseFloat(val));
+                          }}
                           className="w-full p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
                         />
                       </div>
                       <div className="space-y-1">
                         <label className="text-[10px] text-gray-400 uppercase font-bold">Опт (x)</label>
                         <input 
-                          type="number" 
+                          type="text" 
                           step="0.1"
-                          value={coefficients.wholesale[item.id]}
-                          onChange={(e) => updateCoeff('wholesale', item.id, parseFloat(e.target.value) || 0)}
+                          value={coefficients.wholesale[item.id] === 0 ? '' : coefficients.wholesale[item.id]}
+                          onChange={(e) => {
+                             const val = e.target.value.replace(/[^0-9.]/g, '');
+                             updateCoeff('wholesale', item.id, val === '' ? 0 : parseFloat(val));
+                          }}
                           className="w-full p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
                         />
                       </div>
                       <div className="space-y-1">
                         <label className="text-[10px] text-gray-400 uppercase font-bold">Дизайнер (x)</label>
                         <input 
-                          type="number" 
+                          type="text" 
                           step="0.1"
-                          value={coefficients.designer[item.id]}
-                          onChange={(e) => updateCoeff('designer', item.id, parseFloat(e.target.value) || 0)}
+                          value={coefficients.designer[item.id] === 0 ? '' : coefficients.designer[item.id]}
+                          onChange={(e) => {
+                             const val = e.target.value.replace(/[^0-9.]/g, '');
+                             updateCoeff('designer', item.id, val === '' ? 0 : parseFloat(val));
+                          }}
                           className="w-full p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
                         />
                       </div>
@@ -4252,101 +5450,50 @@ const SettingsView = ({
             </div>
           </section>
         )}
-
-        <section>
-          <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Категории товаров и коэффициенты</h3>
-          <p className="text-sm text-gray-500 mb-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
-            Добавьте категорию товара, если она будет иметь иной коэфициент, отличающийся от общей фурнитуры. Коэффиценты можно настроить в таблице ниже.
-          </p>
-          <div className="space-y-4">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newCategory}
-                onChange={(e) => setNewCategory(e.target.value)}
-                placeholder="Новая категория..."
-                className="flex-1 p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-              <button
-                onClick={handleAddCategory}
-                disabled={!newCategory}
-                className="px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:bg-gray-300 transition-colors flex items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Добавить
-              </button>
-            </div>
-            {!isProduction && (
-              <div className="grid gap-4">
-                {productCategories.map(cat => (
-                  <div key={cat} className="p-4 bg-gray-50 rounded-xl">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleRemoveCategory(cat)}
-                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                          title="Удалить категорию"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                        <span className="font-bold text-gray-700 block">{cat}</span>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <>
-                        {isContract && productionSettings?.categories?.coefficients?.[cat] !== undefined && (
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-blue-600 uppercase font-bold">От производства</label>
-                            <div className="p-2 bg-blue-50 text-blue-700 font-bold rounded-lg text-right border border-blue-100">
-                              {productionSettings.categories.coefficients[cat]}
-                            </div>
-                          </div>
-                        )}
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-gray-400 uppercase font-bold">Моя розница (x)</label>
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            value={coefficients.retail.products?.[cat] || 1.5}
-                            onChange={(e) => updateProductCoeff('retail', cat, parseFloat(e.target.value) || 0)}
-                            className="w-full p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-gray-400 uppercase font-bold">Опт (x)</label>
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            value={coefficients.wholesale.products?.[cat] || 1.2}
-                            onChange={(e) => updateProductCoeff('wholesale', cat, parseFloat(e.target.value) || 0)}
-                            className="w-full p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-gray-400 uppercase font-bold">Дизайнер (x)</label>
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            value={coefficients.designer.products?.[cat] || 1.3}
-                            onChange={(e) => updateProductCoeff('designer', cat, parseFloat(e.target.value) || 0)}
-                            className="w-full p-2 border border-gray-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                        </div>
-                      </>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
       </div>
     )}
 
         {activeSubTab === 'services' && (
           <div className="space-y-12 animate-in fade-in duration-500">
             <div className="space-y-8">
+              {/* Production Cycle Section */}
+              <section className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center">
+                    <Target className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-gray-900 leading-none font-sans">Производственный цикл</h3>
+                    <p className="text-xs text-gray-400 font-medium mt-1 font-sans">Тип расчета рабочих дней для изготовления</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setOwnProductionConfig(prev => ({ ...prev, productionCycle: 'working' }))}
+                    className={cn(
+                      "flex-1 py-3 px-4 rounded-2xl text-xs font-bold transition-all border",
+                      ownProductionConfig.productionCycle === 'working' || !ownProductionConfig.productionCycle
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100"
+                        : "bg-white text-gray-500 border-gray-100 hover:border-indigo-100"
+                    )}
+                  >
+                    Рабочие дни
+                  </button>
+                  <button
+                    onClick={() => setOwnProductionConfig(prev => ({ ...prev, productionCycle: 'calendar' }))}
+                    className={cn(
+                      "flex-1 py-3 px-4 rounded-2xl text-xs font-bold transition-all border",
+                      ownProductionConfig.productionCycle === 'calendar'
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100"
+                        : "bg-white text-gray-500 border-gray-100 hover:border-indigo-100"
+                    )}
+                  >
+                    Календарные дни
+                  </button>
+                </div>
+              </section>
+
               {/* Assembly & Delivery Section */}
               <section className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
                   <div className="flex items-center gap-3 mb-6">
@@ -4369,18 +5516,24 @@ const SettingsView = ({
                           <div className="space-y-1">
                             <span className="text-[11px] font-bold text-gray-600 block ml-1 font-sans">Минимальная (₽)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.basePrice}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, basePrice: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.basePrice === 0 ? '' : deliveryTariffs.basePrice}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, basePrice: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
                             />
                           </div>
                           <div className="space-y-1">
                             <span className="text-[11px] font-bold text-gray-600 block ml-1 font-sans">Бесплатно (км)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.baseDistance}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, baseDistance: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.baseDistance === 0 ? '' : deliveryTariffs.baseDistance}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, baseDistance: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
                             />
                           </div>
@@ -4390,18 +5543,24 @@ const SettingsView = ({
                           <div className="space-y-1">
                             <span className="text-[11px] font-bold text-gray-600 block ml-1 font-sans">Цена за км (₽/км)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.extraKmPrice}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraKmPrice: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.extraKmPrice === 0 ? '' : deliveryTariffs.extraKmPrice}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, extraKmPrice: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
                             />
                           </div>
                           <div className="space-y-1">
                             <span className="text-[11px] font-bold text-gray-600 block ml-1 font-sans">Доп. грузчик (₽)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.extraLoaderPrice}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, extraLoaderPrice: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.extraLoaderPrice === 0 ? '' : deliveryTariffs.extraLoaderPrice}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, extraLoaderPrice: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
                             />
                           </div>
@@ -4415,27 +5574,36 @@ const SettingsView = ({
                           <div className="flex items-center justify-between gap-4">
                             <span className="text-xs font-bold text-blue-800 font-sans">Базовый подъем (₽)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.loadingBase}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, loadingBase: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.loadingBase === 0 ? '' : deliveryTariffs.loadingBase}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, loadingBase: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-24 px-3 py-1.5 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-right"
                             />
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <span className="text-xs font-bold text-blue-800 font-sans">Этаж без лифта (₽/эт)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.floorPrice}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, floorPrice: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.floorPrice === 0 ? '' : deliveryTariffs.floorPrice}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, floorPrice: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-24 px-3 py-1.5 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-right"
                             />
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <span className="text-xs font-bold text-blue-800 font-sans">С лифтом (фикс ₽)</span>
                             <input 
-                              type="number"
-                              value={deliveryTariffs.elevatorPrice}
-                              onChange={(e) => setDeliveryTariffs(prev => ({ ...prev, elevatorPrice: parseInt(e.target.value) || 0 }))}
+                              type="text"
+                              value={deliveryTariffs.elevatorPrice === 0 ? '' : deliveryTariffs.elevatorPrice}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                setDeliveryTariffs(prev => ({ ...prev, elevatorPrice: val === '' ? 0 : parseInt(val) }));
+                              }}
                               className="w-24 px-3 py-1.5 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-right"
                             />
                           </div>
@@ -4471,18 +5639,24 @@ const SettingsView = ({
                               <div className="space-y-1">
                                 <span className="text-[10px] font-bold text-gray-500 block ml-1 uppercase font-sans">Розница (₽)</span>
                                 <input 
-                                  type="number"
-                                  value={hardwareKitPrice.retail}
-                                  onChange={(e) => setHardwareKitPrice(prev => ({ ...prev, retail: parseInt(e.target.value) || 0 }))}
+                                  type="text"
+                                  value={hardwareKitPrice.retail === 0 ? '' : hardwareKitPrice.retail}
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(/[^0-9]/g, '');
+                                    setHardwareKitPrice(prev => ({ ...prev, retail: val === '' ? 0 : parseInt(val) }));
+                                  }}
                                   className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
                                 />
                               </div>
                               <div className="space-y-1">
                                 <span className="text-[10px] font-bold text-gray-500 block ml-1 uppercase font-sans">Дизайнер (₽)</span>
                                 <input 
-                                  type="number"
-                                  value={hardwareKitPrice.designer || 0}
-                                  onChange={(e) => setHardwareKitPrice(prev => ({ ...prev, designer: parseInt(e.target.value) || 0 }))}
+                                  type="text"
+                                  value={(hardwareKitPrice.designer || 0) === 0 ? '' : hardwareKitPrice.designer}
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(/[^0-9]/g, '');
+                                    setHardwareKitPrice(prev => ({ ...prev, designer: val === '' ? 0 : parseInt(val) }));
+                                  }}
                                   className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
                                 />
                               </div>
@@ -4533,48 +5707,6 @@ const SettingsView = ({
 
         {activeSubTab === 'production' && isProduction && (
           <div className="space-y-12 animate-in fade-in duration-500">
-            <section>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Подключенные клиенты</h3>
-              </div>
-              <p className="text-xs text-gray-500 mb-6">Список салонов и дизайнеров, работающих с вами. Включите «Спец условия», чтобы задать индивидуальные коэффициенты.</p>
-              
-              {salonsUsingMe.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {salonsUsingMe.map(salon => {
-                    const isSpecial = ownProductionConfig.specialConditionIds?.includes(salon.id);
-                    return (
-                      <div key={salon.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-between gap-4">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-bold text-gray-800">{salon.name}</div>
-                            <div className="text-[10px] text-gray-400 uppercase font-medium">{salon.city} | {salon.type}</div>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => toggleSpecialCondition(salon.id)}
-                          className={cn(
-                            "w-full py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2",
-                            isSpecial 
-                              ? "bg-blue-600 text-white shadow-md shadow-blue-100" 
-                              : "bg-white text-gray-600 border border-gray-200 hover:border-blue-300 hover:text-blue-600"
-                          )}
-                        >
-                          {isSpecial ? <CheckCircle2 className="w-4 h-4" /> : <div className="w-4 h-4" />}
-                          Спец условия {isSpecial ? 'активны' : 'не активны'}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="p-8 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 text-center">
-                  <Users className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-500">Нет подключенных клиентов</p>
-                </div>
-              )}
-            </section>
-
             <section className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -4582,16 +5714,16 @@ const SettingsView = ({
                     <Database className="w-5 h-5 text-indigo-600" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-gray-900 leading-none">Бренды ЛДСП и толщины</h3>
+                    <h3 className="text-lg font-black text-gray-900 leading-none">Бренды материала и толщины кромок</h3>
                     <p className="text-xs text-gray-400 font-medium mt-1">Доступность материалов и кромок</p>
                   </div>
                 </div>
                 <button
-                  onClick={handleAddLdspBrand}
+                  onClick={() => setShowBrandCoeffModal(true)}
                   className="px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2"
                 >
                   <Plus className="w-4 h-4" />
-                  Добавить бренд
+                  Добавить коэффициент
                 </button>
               </div>
 
@@ -4642,11 +5774,77 @@ const SettingsView = ({
 
             <section>
               <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Подключенные клиенты</h3>
+              </div>
+              <p className="text-xs text-gray-500 mb-6">Список салонов и дизайнеров, работающих с вами. Включите «Спец условия», чтобы задать индивидуальные коэффициенты.</p>
+              
+              {salonsUsingMe.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {salonsUsingMe.map(salon => {
+                    const isSpecial = ownProductionConfig.specialConditionIds?.includes(salon.id);
+                    return (
+                      <div key={salon.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-between gap-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-gray-800">{salon.name}</div>
+                            <div className="text-[10px] text-gray-400 uppercase font-medium">{salon.city} | {salon.type}</div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => toggleSpecialCondition(salon.id)}
+                          className={cn(
+                            "w-full py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2",
+                            isSpecial 
+                              ? "bg-blue-600 text-white shadow-md shadow-blue-100" 
+                              : "bg-white text-gray-600 border border-gray-200 hover:border-blue-300 hover:text-blue-600"
+                          )}
+                        >
+                          {isSpecial ? <CheckCircle2 className="w-4 h-4" /> : <div className="w-4 h-4" />}
+                          Спец условия {isSpecial ? 'активны' : 'не активны'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-8 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 text-center">
+                  <Users className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-500">Нет подключенных клиентов</p>
+                </div>
+              )}
+            </section>
+
+            <section className="mb-12">
+              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Категории товаров</h3>
+              <p className="text-xs text-gray-500 mb-4 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                Добавьте категорию товара, если она будет иметь иной коэффициент, отличающийся от общей фурнитуры. Коэффициенты можно настроить в таблице ниже.
+              </p>
+              <div className="flex gap-2 max-w-md">
+                <input
+                  type="text"
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value)}
+                  placeholder="Новая категория..."
+                  className="flex-1 px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                />
+                <button
+                  onClick={handleAddCategory}
+                  disabled={!newCategory}
+                  className="px-6 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:bg-gray-300 transition-colors flex items-center gap-2 text-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  Добавить
+                </button>
+              </div>
+            </section>
+
+            <section>
+              <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Коэффициенты и клиенты</h3>
               </div>
               <p className="text-xs text-gray-500 mb-6 font-medium">В этой таблице вы управляете всеми наценками: для розничных клиентов, дизайнеров и ваших салонов-партнеров.</p>
               
-              <div className="overflow-x-auto rounded-xl border border-gray-100">
+              <div className="overflow-x-auto rounded-xl border border-gray-100 mb-6">
                 <table className="w-full text-left border-collapse bg-white">
                   <thead>
                     <tr className="border-b border-gray-100">
@@ -4675,24 +5873,21 @@ const SettingsView = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                      { id: 'ldsp', label: 'ЛДСП / МДФ', baseId: 'ldsp' },
-                      { id: 'hdf', label: 'ДВП / ХДФ', baseId: 'hdf' },
-                      { id: 'edge', label: 'Кромка', baseId: 'edge' },
-                      { id: 'facadeSheet', label: 'Фасад (плита)', baseId: 'facadeSheet' },
-                      { id: 'facadeCustom', label: 'Фасад (заказной)', baseId: 'facadeCustom' },
-                      { id: 'hardware', label: 'Фурнитура', baseId: 'hardware' },
-                      ...productCategories.map(cat => ({ id: `cat_${cat}`, label: cat, isProduct: true, catName: cat }))
-                    ].map((row: any, idx) => (
+                    {categories.map((row: any, idx) => {
+                      const baseId = row.id.startsWith('cat_') ? row.id : row.id;
+                      const catName = row.id.startsWith('cat_') ? row.label : null;
+                      const isProduct = row.id.startsWith('cat_');
+                      
+                      return (
                       <tr key={row.id} className={cn(
                         "border-b border-gray-50 transition-colors",
                         idx % 2 === 0 ? "bg-white" : "bg-gray-50/10"
                       )}>
                         <td className="py-2 px-4 text-[11px] font-semibold text-gray-600">
                           <div className="flex items-center gap-2">
-                            {row.isProduct && (
+                            {isProduct && (
                               <button
-                                onClick={() => handleRemoveCategory(row.catName!)}
+                                onClick={() => handleRemoveCategory(catName!)}
                                 className="p-1 text-red-500 hover:bg-red-50 rounded"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -4708,13 +5903,13 @@ const SettingsView = ({
                             type="number"
                             step="0.01"
                             value={
-                              row.isProduct ? (coefficients.retail.products?.[row.catName!] || 1.5) : 
-                              (coefficients.retail[row.baseId!] || 1.5)
+                              isProduct ? (coefficients.retail.products?.[catName!] || 1.5) : 
+                              (coefficients.retail[baseId!] || 1.5)
                             }
                             onChange={(e) => {
                               const v = parseFloat(e.target.value) || 0;
-                              if (row.isProduct) updateProductCoeff('retail', row.catName!, v);
-                              else updateCoeff('retail', row.baseId!, v);
+                              if (isProduct) updateProductCoeff('retail', catName!, v);
+                              else updateCoeff('retail', baseId!, v);
                             }}
                             className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold focus:ring-1 focus:ring-blue-500 outline-none text-right"
                           />
@@ -4726,13 +5921,13 @@ const SettingsView = ({
                             type="number"
                             step="0.01"
                             value={
-                              row.isProduct ? (coefficients.designer.products?.[row.catName!] || 1.5) : 
-                              (coefficients.designer[row.baseId!] || 1.5)
+                              isProduct ? (coefficients.designer.products?.[catName!] || 1.5) : 
+                              (coefficients.designer[baseId!] || 1.5)
                             }
                             onChange={(e) => {
                               const v = parseFloat(e.target.value) || 0;
-                              if (row.isProduct) updateProductCoeff('designer', row.catName!, v);
-                              else updateCoeff('designer', row.baseId!, v);
+                              if (isProduct) updateProductCoeff('designer', catName!, v);
+                              else updateCoeff('designer', baseId!, v);
                             }}
                             className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold focus:ring-1 focus:ring-blue-500 outline-none text-right"
                           />
@@ -4745,7 +5940,7 @@ const SettingsView = ({
                               type="number"
                               step="0.01"
                               value={
-                                ((ownProductionConfig as any).standardCoefficients?.[row.id] ?? 1.5)
+                                (ownProductionConfig.standardCoefficients?.[row.id] ?? 1.5)
                               }
                               onChange={(e) => {
                                 const v = e.target.value;
@@ -4773,10 +5968,91 @@ const SettingsView = ({
                           </td>
                         ))}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+
+              {/* Brand Coefficients Table */}
+              {(ownProductionConfig.brandCoefficients || []).length > 0 && (
+                <div className="overflow-x-auto rounded-xl border border-gray-100 mb-8 mt-6">
+                  <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold text-gray-500 uppercase tracking-widest">Персональные коэффициенты по брендам</div>
+                  <table className="w-full text-left border-collapse bg-white">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="py-2 px-4 text-[10px] font-bold text-gray-400 uppercase bg-gray-50/50">Категория / Бренд</th>
+                        <th className="py-2 px-4 text-[10px] font-bold text-gray-400 uppercase bg-gray-50/50 border-l border-gray-100">Розница</th>
+                        <th className="py-2 px-4 text-[10px] font-bold text-gray-400 uppercase bg-gray-50/50 border-l border-gray-100">Дизайнер</th>
+                        <th className="py-2 px-4 text-[10px] font-bold text-blue-600 uppercase bg-blue-50/30 border-l border-blue-100 text-center">Салон</th>
+                        {salonsInTable.map(s => (
+                          <th key={s.id} className="py-2 px-4 text-[10px] font-bold text-gray-400 uppercase bg-gray-50/50 border-l border-gray-100">{s.name}</th>
+                        ))}
+                        <th className="py-2 px-4 bg-gray-50/50"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ownProductionConfig.brandCoefficients?.map(bc => (
+                        <tr key={bc.id} className="border-b border-gray-50 hover:bg-gray-50/30 transition-colors">
+                          <td className="py-2 px-4 border-r border-gray-50">
+                            <div className="font-bold text-gray-700 text-[11px]">{bc.brand}</div>
+                            <div className="text-[9px] text-gray-400 font-medium uppercase">{categories.find(c => c.id === bc.categoryId)?.label}</div>
+                          </td>
+                          <td className="py-1.5 px-4">
+                            <input 
+                              type="number" step="0.01" 
+                              value={bc.retail} 
+                              onChange={(e) => updateBrandCoeff(bc.id, 'retail', parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 border border-gray-100 rounded-lg text-xs font-bold text-right"
+                            />
+                          </td>
+                          <td className="py-1.5 px-4 border-l border-gray-50">
+                            <input 
+                              type="number" step="0.01" 
+                              value={bc.designer} 
+                              onChange={(e) => updateBrandCoeff(bc.id, 'designer', parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 border border-gray-100 rounded-lg text-xs font-bold text-right"
+                            />
+                          </td>
+                          <td className="py-1.5 px-4 border-l border-blue-50 bg-blue-50/5">
+                             <input 
+                              type="number" step="0.01" 
+                              value={bc.standardSalon} 
+                              onChange={(e) => updateBrandCoeff(bc.id, 'standardSalon', parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 border border-blue-100 rounded-lg text-xs font-bold text-right bg-white"
+                            />
+                          </td>
+                          {salonsInTable.map(s => (
+                            <td key={s.id} className="py-1.5 px-4 border-l border-gray-50">
+                               <input 
+                                type="number" step="0.01" 
+                                value={bc.salonCoeffs?.[s.id] ?? bc.standardSalon} 
+                                onChange={(e) => updateBrandSalonCoeff(bc.id, s.id, parseFloat(e.target.value) || 0)}
+                                className="w-full px-2 py-1 border border-gray-100 rounded-lg text-xs font-bold text-right"
+                              />
+                            </td>
+                          ))}
+                          <td className="py-1.5 px-4 text-center">
+                            <button onClick={() => handleRemoveBrandCoefficient(bc.id)} className="text-gray-300 hover:text-red-500">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowBrandCoeffModal(true)}
+                className="w-full py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-500 font-bold hover:border-blue-400 hover:text-blue-600 transition-all flex items-center justify-center gap-2 group"
+              >
+                <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+                   <Target className="w-4 h-4" />
+                </div>
+                Указать персональный коэффициент для отдельного бренда
+              </button>
             </section>
           </div>
         )}
@@ -4924,7 +6200,7 @@ const SettingsView = ({
                       <input 
                         type="text"
                         placeholder="Сайт"
-                        value={companyInfo.website}
+                        value={companyInfo.website || ''}
                         onChange={(e) => setCompanyInfo({ ...companyInfo, website: e.target.value })}
                         className="w-full pl-10 pr-4 py-2 bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-sm"
                       />
@@ -4933,14 +6209,14 @@ const SettingsView = ({
                       <input 
                         type="text"
                         placeholder="VK"
-                        value={companyInfo.socials?.vk}
+                        value={companyInfo.socials?.vk || ''}
                         onChange={(e) => setCompanyInfo({ ...companyInfo, socials: { ...companyInfo.socials, vk: e.target.value } })}
                         className="w-full px-2 py-2 bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs"
                       />
                       <input 
                         type="text"
                         placeholder="Telegram"
-                        value={companyInfo.socials?.telegram}
+                        value={companyInfo.socials?.telegram || ''}
                         onChange={(e) => setCompanyInfo({ ...companyInfo, socials: { ...companyInfo.socials, telegram: e.target.value } })}
                         className="w-full px-2 py-2 bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs"
                       />
@@ -5015,6 +6291,108 @@ const SettingsView = ({
           </p>
         </div>
       </div>
+
+      {/* Brand Coefficient Modal */}
+      {showBrandCoeffModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-black text-gray-900 leading-none font-sans">Персональный коэффициент</h3>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-2 font-sans">Настройка для конкретного бренда</p>
+              </div>
+              <button 
+                onClick={() => setShowBrandCoeffModal(false)}
+                className="w-10 h-10 bg-gray-50 text-gray-400 hover:text-gray-600 rounded-xl flex items-center justify-center transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 font-sans">Категория</label>
+                  <select
+                    value={brandCoeffForm.categoryId}
+                    onChange={(e) => setBrandCoeffForm({ ...brandCoeffForm, categoryId: e.target.value, brand: '' })}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold font-sans"
+                  >
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 font-sans">Бренд</label>
+                  <select
+                    value={brandCoeffForm.brand}
+                    onChange={(e) => setBrandCoeffForm({ ...brandCoeffForm, brand: e.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold font-sans"
+                  >
+                    <option value="">Выберите бренд...</option>
+                    {availableBrands.map(brand => (
+                      <option key={brand} value={brand}>{brand}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                <p className="text-[10px] leading-relaxed text-blue-700 font-bold font-sans">
+                  <span className="text-blue-900 uppercase tracking-widest mr-2">Примечание:</span>
+                  Если в списке отсутствует бренд в выбранной вами категории, это значит, что он не добавлен в разделе <b>Производство</b> или в вашем каталоге нет материалов с этим брендом.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 font-sans">Розница</label>
+                  <input
+                    type="number" step="0.01"
+                    value={brandCoeffForm.retail}
+                    onChange={(e) => setBrandCoeffForm({ ...brandCoeffForm, retail: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold font-sans"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 font-sans">Дизайнер</label>
+                  <input
+                    type="number" step="0.01"
+                    value={brandCoeffForm.designer}
+                    onChange={(e) => setBrandCoeffForm({ ...brandCoeffForm, designer: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold font-sans"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 font-sans text-blue-600">Салон</label>
+                  <input
+                    type="number" step="0.01"
+                    value={brandCoeffForm.standardSalon}
+                    onChange={(e) => setBrandCoeffForm({ ...brandCoeffForm, standardSalon: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 bg-blue-50 border border-blue-100 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold font-sans text-blue-600"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => setShowBrandCoeffModal(false)}
+                className="flex-1 py-4 bg-white border border-gray-200 text-gray-500 font-bold rounded-2xl hover:bg-gray-100 transition-all text-sm font-sans"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleAddBrandCoefficient}
+                className="flex-[2] py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all text-sm shadow-xl shadow-blue-100 font-sans"
+              >
+                Добавить коэффициент
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -5032,7 +6410,13 @@ const ServiceItem = ({ service, defaultPrice, onAdd }: { service: any, defaultPr
   const [qty, setQty] = useState(1);
   const [customPrice, setCustomPrice] = useState<string | number>(defaultPrice > 0 ? defaultPrice : '');
 
-  const currentPrice = typeof customPrice === 'number' ? customPrice : (parseFloat(customPrice) || 0);
+  useEffect(() => {
+    if (defaultPrice > 0) {
+      setCustomPrice(defaultPrice);
+    }
+  }, [defaultPrice]);
+
+  const currentPrice = typeof customPrice === 'number' ? customPrice : (parseFloat(String(customPrice)) || 0);
 
   return (
     <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -5042,10 +6426,13 @@ const ServiceItem = ({ service, defaultPrice, onAdd }: { service: any, defaultPr
           <span className="text-sm text-gray-500">Ед. изм: {service.unit}</span>
           <div className="flex items-center gap-2">
             <input 
-              type="number"
+              type="text"
               placeholder="Цена"
               value={customPrice}
-              onChange={(e) => setCustomPrice(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value.replace(/[^0-9.]/g, '');
+                setCustomPrice(val);
+              }}
               className="w-24 px-3 py-1 border border-gray-200 rounded-lg text-sm font-bold text-blue-600 focus:ring-2 focus:ring-blue-500 outline-none"
             />
             <span className="text-sm font-bold text-gray-500">₽</span>
@@ -5093,11 +6480,13 @@ const ServiceItem = ({ service, defaultPrice, onAdd }: { service: any, defaultPr
 const ServicesView = ({ 
   onAddService, 
   prices,
+  setPrices,
   catalogServices,
   setCatalogServices
 }: { 
   onAddService: (service: any, qty: number) => void;
   prices: Record<string, number>;
+  setPrices: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   catalogServices: any[];
   setCatalogServices: React.Dispatch<React.SetStateAction<any[]>>;
 }) => {
@@ -5121,14 +6510,21 @@ const ServicesView = ({
 
   const handleCreateService = () => {
     if (!newService.name || newService.price <= 0) return;
+    const serviceId = `custom-${Date.now()}`;
     const service = {
-      id: `custom-${Date.now()}`,
+      id: serviceId,
       name: newService.name,
       unit: newService.unit,
-      price: newService.price
     };
     setCatalogServices(prev => [...prev, service]);
+    // Also update global prices
+    setPrices?.(prev => ({ ...prev, [newService.name]: newService.price }));
     setNewService({ name: '', unit: 'шт', price: 0 });
+  };
+
+  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/[^0-9.]/g, '');
+    setNewService(prev => ({ ...prev, price: val === '' ? 0 : parseFloat(val) }));
   };
 
   return (
@@ -5157,18 +6553,18 @@ const ServicesView = ({
           />
           <div className="flex items-center gap-2">
             <input 
-              type="number" 
+              type="text" 
               placeholder="Цена"
-              value={newService.price || ''}
-              onChange={e => setNewService(prev => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
-              className="w-24 px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+              value={newService.price === 0 ? '' : newService.price}
+              onChange={handlePriceChange}
+              className="w-24 px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold"
             />
             <span className="font-bold text-gray-500">₽</span>
           </div>
           <button 
             onClick={handleCreateService}
             disabled={!newService.name || newService.price <= 0}
-            className="px-6 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:bg-gray-300 transition-colors"
+            className="px-6 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:bg-gray-300 transition-colors shadow-lg shadow-blue-100"
           >
             Добавить
           </button>
@@ -5182,7 +6578,7 @@ const ServicesView = ({
           </div>
         ) : (
           catalogServices.map(service => {
-            const defaultPrice = service.price !== undefined ? service.price : (prices[service.name] || 0);
+            const defaultPrice = prices[service.name] || service.price || 0;
             return (
               <ServiceItem 
                 key={service.id} 
@@ -5292,24 +6688,44 @@ const ServiceSectionView = ({
 
   const calculatedDeliveryPrice = useMemo(() => {
     if (!data.delivery) return 0;
-    let fee = deliveryTariffs.basePrice;
-    if (data.distance > deliveryTariffs.baseDistance) {
-      fee += (data.distance - deliveryTariffs.baseDistance) * deliveryTariffs.extraKmPrice;
+    let fee = deliveryTariffs?.basePrice || 0;
+    if (data.distance > (deliveryTariffs?.baseDistance || 0)) {
+      fee += (data.distance - (deliveryTariffs?.baseDistance || 0)) * (deliveryTariffs?.extraKmPrice || 0);
     }
     const totalVolume = totalLdspSheets * 0.1;
-    if (totalVolume > deliveryTariffs.baseVolume) {
-      fee += (totalVolume - deliveryTariffs.baseVolume) * deliveryTariffs.extraVolumePrice;
+    if (totalVolume > (deliveryTariffs?.baseVolume || 0)) {
+      fee += (totalVolume - (deliveryTariffs?.baseVolume || 0)) * (deliveryTariffs?.extraVolumePrice || 0);
     }
+    let loadingFee = deliveryTariffs?.loadingBase || 0;
+    const floor = parseInt(data.address?.floor) || 0;
+    if (floor > 1) {
+      if (data.address?.elevator === 'none') {
+        loadingFee += (floor - 1) * (deliveryTariffs?.floorPrice || 0);
+      } else {
+        loadingFee += (deliveryTariffs?.elevatorPrice || 0);
+      }
+    }
+    fee += loadingFee;
     if (data.extraLoader) {
-      fee += deliveryTariffs.extraLoaderPrice;
+      fee += (deliveryTariffs?.extraLoaderPrice || 0);
     }
     return Math.round(fee);
-  }, [data.delivery, data.distance, data.extraLoader, deliveryTariffs, totalLdspSheets]);
+  }, [data.delivery, data.distance, data.extraLoader, data.address?.floor, data.address?.elevator, deliveryTariffs, totalLdspSheets]);
 
   const calculatedAssemblyPrice = useMemo(() => {
     if (!data.assembly) return 0;
     return Math.round(totalCost * (assemblyPercentage / 100));
   }, [data.assembly, totalCost, assemblyPercentage]);
+
+  useEffect(() => {
+    if (data.deliveryPrice !== calculatedDeliveryPrice || data.assemblyPrice !== calculatedAssemblyPrice) {
+      setData({
+        ...data,
+        deliveryPrice: calculatedDeliveryPrice,
+        assemblyPrice: calculatedAssemblyPrice
+      });
+    }
+  }, [calculatedDeliveryPrice, calculatedAssemblyPrice]);
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -7174,6 +8590,8 @@ export default function App() {
     productionId: ''
   });
   
+  const [catalogMaterials, setCatalogMaterials] = useState<Record<string, string[]>>(LDSP_DATABASE);
+  
   const [ownProductionConfig, setOwnProductionConfig] = useState<OwnProductionConfig>({
     ldspBrands: [
       { id: '1', brand: 'Egger', format: '2800x2070', type: 'ЛДСП' },
@@ -7195,7 +8613,49 @@ export default function App() {
     facades: { 'Пленка ПВХ': true, 'Эмаль': true, 'Пластик': false, 'Шпон': false, 'Массив': false },
     customFacades: [],
     address: '',
-    photos: []
+    photos: [],
+    extraFacadeTypes: [],
+    facadeSettings: {
+      displayName: 'Пленка',
+      minOrderVolume: 0,
+      categories: [
+        { id: 'c1', name: 'Категория 1', purchasePrice: 0 },
+        { id: 'c2', name: 'Категория 2', purchasePrice: 0 },
+        { id: 'c3', name: 'Категория 3', purchasePrice: 0 },
+        { id: 'c4', name: 'Категория 4', purchasePrice: 0 },
+        { id: 'c5', name: 'Категория 5', purchasePrice: 0 }
+      ],
+      millings: [
+        { id: 'm1', name: 'Мыло', purchasePrice: 0 },
+        { id: 'm2', name: 'Фрезеровка ТИП 1', purchasePrice: 0 },
+        { id: 'm3', name: 'Фрезеровка ТИП 2', purchasePrice: 0 },
+        { id: 'm4', name: 'Фрезеровка ТИП 3', purchasePrice: 0 },
+        { id: 'm5', name: 'Фрезеровка ТИП 4', purchasePrice: 0 }
+      ],
+      thicknessPrices: {
+        '16': 0,
+        '19': 0,
+        '22': 0
+      }
+    },
+    enamelSettings: {
+      displayName: 'Эмаль',
+      minOrderVolume: 0,
+      categories: [
+        { id: 'e1', name: 'Категория 1', purchasePrice: 0 },
+        { id: 'e2', name: 'Категория 2', purchasePrice: 0 },
+        { id: 'e3', name: 'Категория 3', purchasePrice: 0 }
+      ],
+      millings: [
+        { id: 'em1', name: 'Мыло', purchasePrice: 0 },
+        { id: 'em2', name: 'Фрезеровка ТИП 1', purchasePrice: 0 }
+      ],
+      thicknessPrices: {
+        '16': 0,
+        '19': 0,
+        '22': 0
+      }
+    }
   });
 
   // Removed the auto-redirect to admin panel
@@ -7342,9 +8802,14 @@ export default function App() {
     }
   };
 
+  const [selectedSalonId, setSelectedSalonId] = useState<string>('');
+  const [currentProjectTotal, setCurrentProjectTotal] = useState(0);
   const [activeTab, setActiveTab] = useState<'calculator' | 'price' | 'summary' | 'settings' | 'products' | 'services' | 'service-section' | 'production' | 'employees' | 'projects' | 'specification'>('calculator');
   const [selectedProductCategory, setSelectedProductCategory] = useState<string | null>(null);
   const [selectedProjectForSpec, setSelectedProjectForSpec] = useState<any | null>(null);
+  const [selectedProjectsForCheckout, setSelectedProjectsForCheckout] = useState<any[]>([]);
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [printSetData, setPrintSetData] = useState<{ projects: any[], data: any } | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [results, setResults] = useState<any>(null);
@@ -7582,13 +9047,28 @@ export default function App() {
           if ('productionId' in data || 'city' in data) {
             setContractConfig(data as ContractConfig);
           } else {
-            setOwnProductionConfig(prev => ({
-              ...prev,
-              ...data,
-              specialConditionIds: (data as any).specialConditionIds || [],
-              standardCoefficients: (data as any).standardCoefficients || {},
-              salonCoefficients: (data as any).salonCoefficients || {}
-            } as OwnProductionConfig));
+            setOwnProductionConfig(prev => {
+              const migrated = {
+                ...prev,
+                ...data,
+                specialConditionIds: (data as any).specialConditionIds || [],
+                standardCoefficients: (data as any).standardCoefficients || {},
+                salonCoefficients: (data as any).salonCoefficients || {}
+              } as OwnProductionConfig;
+
+              // Migrate facadeCustom coefficient if missing
+              if (migrated.standardCoefficients && !migrated.standardCoefficients.facadeCustom) {
+                migrated.standardCoefficients.facadeCustom = 1.2;
+              }
+              if (migrated.salonCoefficients) {
+                Object.keys(migrated.salonCoefficients).forEach(sId => {
+                  if (!migrated.salonCoefficients[sId].facadeCustom) {
+                    migrated.salonCoefficients[sId].facadeCustom = 1.1;
+                  }
+                });
+              }
+              return migrated;
+            });
           }
         }
       },
@@ -7610,32 +9090,50 @@ export default function App() {
               setCoefficients(data.coefficients);
             } else {
               // Migration for old format
-              const migrated = { ...data.coefficients };
+              const migrated: any = { ...data.coefficients };
+              const defaults = {
+                ldsp: 4, hdf: 4, edge: 4, facadeSheet: 1.8, facadeCustom: 1.5,
+                hardware: 1.5, assembly: 1.5, delivery: 1.5, products: {}
+              };
+              const wholesaleDefaults = {
+                ldsp: 2, hdf: 2, edge: 2, facadeSheet: 1.2, facadeCustom: 1.2,
+                hardware: 1.2, assembly: 1.2, delivery: 1.2, products: {}
+              };
+
               if (!migrated.retail) {
-                migrated.retail = {
-                  ldsp: data.coefficients.ldsp || 4,
-                  hdf: data.coefficients.hdf || 4,
-                  edge: data.coefficients.edge || 4,
-                  facadeSheet: data.coefficients.facadeSheet || 1.8,
-                  products: data.coefficients.products || {}
-                };
-                migrated.wholesale = {
-                  ldsp: data.coefficients.ldsp || 2,
-                  hdf: data.coefficients.hdf || 2,
-                  edge: data.coefficients.edge || 2,
-                  facadeSheet: data.coefficients.facadeSheet || 1.2,
-                  products: data.coefficients.products || {}
-                };
+                migrated.retail = { ...defaults };
+                // Keep existing top-level fields if they was in old format
+                Object.keys(defaults).forEach(key => {
+                  if (data.coefficients[key] !== undefined) migrated.retail[key] = data.coefficients[key];
+                });
+              }
+              if (!migrated.wholesale) {
+                migrated.wholesale = { ...wholesaleDefaults };
+                // Try to infer from retail if missing
+                Object.keys(wholesaleDefaults).forEach(key => {
+                  if (migrated.retail[key] !== undefined && key !== 'products') {
+                    migrated.wholesale[key] = Math.max(1, migrated.retail[key] * 0.5);
+                  }
+                });
               }
               if (!migrated.designer) {
-                migrated.designer = {
-                  ldsp: (migrated.wholesale?.ldsp || 2) * 1.2,
-                  hdf: (migrated.wholesale?.hdf || 2) * 1.2,
-                  edge: (migrated.wholesale?.edge || 2) * 1.2,
-                  facadeSheet: (migrated.wholesale?.facadeSheet || 1.2) * 1.1,
-                  products: migrated.wholesale?.products || {}
-                };
+                migrated.designer = { ...migrated.wholesale };
+                Object.keys(migrated.wholesale).forEach(key => {
+                  if (key !== 'products' && typeof migrated.wholesale[key] === 'number') {
+                    migrated.designer[key] = migrated.wholesale[key] * 1.1;
+                  }
+                });
               }
+              
+              // Ensure critical missing fields exist even if sub-objects were present
+              ['retail', 'wholesale', 'designer'].forEach(type => {
+                if (!migrated[type].facadeCustom) migrated[type].facadeCustom = (type === 'retail' ? 1.5 : 1.2);
+                if (!migrated[type].hardware) migrated[type].hardware = (type === 'retail' ? 1.5 : 1.2);
+                if (!migrated[type].assembly) migrated[type].assembly = (type === 'retail' ? 1.5 : 1.2);
+                if (!migrated[type].delivery) migrated[type].delivery = (type === 'retail' ? 1.5 : 1.2);
+                if (!migrated[type].products) migrated[type].products = {};
+              });
+
               setCoefficients(migrated);
             }
           }
@@ -7646,6 +9144,7 @@ export default function App() {
           if (data.assemblyIncludes !== undefined) setAssemblyIncludes(data.assemblyIncludes);
           if (data.deliveryTariffs) setDeliveryTariffs(data.deliveryTariffs);
           if (data.mapLink) setMapLink(data.mapLink);
+          if (data.catalogMaterials) setCatalogMaterials(data.catalogMaterials);
         }
       },
       (error) => handleFirestoreError(error, OperationType.GET, `companies/${companyId}/settings/general`)
@@ -7736,6 +9235,8 @@ export default function App() {
         updatedAt: new Date().toISOString(),
         createdBy: userData.uid,
         createdByName: userData.displayName || userData.email || 'Пользователь',
+        status: 'draft',
+        totalPrice: currentProjectTotal,
         data: {
           results,
           selectedDecor,
@@ -7782,6 +9283,50 @@ export default function App() {
     }
   };
 
+  const finalizeSet = async (setData: any) => {
+    if (!companyData?.id || !userData?.uid) return;
+    try {
+      const setId = `set-${Date.now()}`;
+      const setDocRef = doc(db, 'companies', companyData.id, 'sets', setId);
+      
+      const setRecord: FurnitureSet = {
+        id: setId,
+        name: setData.contractNumber ? `Заказ №${setData.contractNumber}` : 'Новый комплект',
+        contractNumber: setData.contractNumber,
+        contractDate: setData.contractDate,
+        leadTimeDays: setData.leadTimeDays,
+        readyDate: setData.readyDate,
+        productionCycle: setData.productionCycle,
+        projectIds: setData.projectIds,
+        totalPrice: setData.totalPrice,
+        clientName: setData.summary.clientName || '',
+        sketches: setData.sketches || [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDoc(setDocRef, setRecord);
+
+      // Update individual projects status
+      for (const pId of setData.projectIds) {
+        await setDoc(doc(db, 'companies', companyData.id, 'projects', pId), {
+          status: 'sent',
+          setId: setId
+        }, { merge: true });
+      }
+
+      setIsCheckoutModalOpen(false);
+      setPrintSetData({ projects: selectedProjectsForCheckout, data: setData });
+      setSelectedProjectsForCheckout([]);
+      showAlert('Успех', 'Спецификация заказа успешно создана и сохранена');
+      
+      // Refresh to projects tab
+      setActiveTab('projects');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `companies/${companyData.id}/sets`);
+    }
+  };
+
   const loadProject = (project: any) => {
     const d = project.data;
     if (d.results) {
@@ -7824,6 +9369,7 @@ export default function App() {
     
     setCurrentProjectId(project.id);
     setCurrentProjectName(project.name);
+    setCurrentProjectTotal(project.totalPrice || 0);
     setActiveTab('calculator');
   };
 
@@ -7877,13 +9423,16 @@ export default function App() {
   const handleAddLdspBrand = () => {
     showPrompt('Новый бренд', 'Введите название бренда (напр. Egger)', '', (brand) => {
       if (brand) {
-        setOwnProductionConfig(prev => ({
-          ...prev,
-          ldspBrands: [
-            ...prev.ldspBrands,
-            { id: Date.now().toString(), brand, format: '2800x2070', type: 'ЛДСП' }
-          ]
-        }));
+        showPrompt('Тип материала', 'Введите тип материала (ЛДСП, МДФ, ХДФ)', 'ЛДСП', (type) => {
+          const materialType = (type === 'МДФ' || type === 'ХДФ' || type === 'ЛДСП') ? type : 'ЛДСП';
+          setOwnProductionConfig(prev => ({
+            ...prev,
+            ldspBrands: [
+              ...prev.ldspBrands,
+              { id: Date.now().toString(), brand, format: '2800x2070', type: materialType }
+            ]
+          }));
+        });
       }
     });
   };
@@ -7951,11 +9500,17 @@ export default function App() {
         productCategories,
         defaultCuttingType,
         companyInfo,
-        prices
+        catalogMaterials
       });
+
+      // Save prices to the dedicated prices document as well
+      await setDoc(doc(db, 'companies', companyData.id, 'settings', 'prices'), {
+        prices,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
       
-      // If production, also save production settings (which contain salon coefficients)
-      if (companyData.type === 'Мебельное производство') {
+      // If production or own production format, also save production settings
+      if (companyData.type === 'Мебельное производство' || productionFormat === 'own') {
         await setDoc(doc(db, 'companies', companyData.id, 'settings', 'production'), ownProductionConfig);
       }
 
@@ -8073,7 +9628,7 @@ export default function App() {
   const [edgeThickness, setEdgeThickness] = useState<Record<string, string>>({});
   const [edgeDecor, setEdgeDecor] = useState<Record<string, string>>({});
   const [facadeType, setFacadeType] = useState<Record<string, 'sheet' | 'custom'>>({});
-  const [facadeCustomType, setFacadeCustomType] = useState<Record<string, 'Пленка' | 'Эмаль' | 'AGT SUPRAMATT PUR' | 'EVOSOFT PUR'>>({});
+  const [facadeCustomType, setFacadeCustomType] = useState<Record<string, string>>({});
   const [facadeCategory, setFacadeCategory] = useState<Record<string, string>>({});
   const [facadeMilling, setFacadeMilling] = useState<Record<string, string>>({});
   const [facadeThicknessOverride, setFacadeThicknessOverride] = useState<Record<string, string>>({});
@@ -8136,7 +9691,7 @@ export default function App() {
   }, [searchQuery]);
 
   const filteredHdfDecors = useMemo(() => {
-    return (LDSP_DATABASE["ХДФ"] || []).filter(name => 
+    return (catalogMaterials["ХДФ"] || []).filter(name => 
       name.toLowerCase().includes(searchQuery.toLowerCase())
     ).map(name => ({ brand: "ХДФ", name }));
   }, [searchQuery]);
@@ -8553,9 +10108,13 @@ export default function App() {
     
     let myMarkup = coefficients[customerType] as any;
     
-    // If we are a production and viewing as a Salon (wholesale), use standardCoefficients
-    if (customerType === 'wholesale' && companyData?.type === 'Мебельное производство' && ownProductionConfig.standardCoefficients) {
-      myMarkup = ownProductionConfig.standardCoefficients as any;
+    // If we are a production and viewing as a Salon (wholesale), prioritize specific salon or use standard
+    if (customerType === 'wholesale' && companyData?.type === 'Мебельное производство') {
+      if (selectedSalonId && ownProductionConfig.salonCoefficients?.[selectedSalonId]) {
+        myMarkup = ownProductionConfig.salonCoefficients[selectedSalonId];
+      } else if (ownProductionConfig.standardCoefficients) {
+        myMarkup = ownProductionConfig.standardCoefficients as any;
+      }
     }
 
     const result = {
@@ -8573,12 +10132,50 @@ export default function App() {
 
     // Multiply product categories
     Object.entries(baseCoeffs.products).forEach(([cat, baseVal]) => {
-      const markupVal = myMarkup.products?.[cat] || 1;
+      // Handle both nested and flat structures (for production config)
+      const markupVal = myMarkup.products?.[cat] ?? myMarkup[`cat_${cat}`] ?? myMarkup[cat] ?? 1;
       result.products[cat] = baseVal * markupVal;
     });
 
     return result;
-  }, [coefficients, customerType, productionFormat, manufacturerCoefficients]);
+  }, [coefficients, customerType, productionFormat, manufacturerCoefficients, companyData?.type, ownProductionConfig, selectedSalonId]);
+
+  const resolveBrandCoefficient = (categoryId: string, brand: string) => {
+    // Determine the user's role/level for coefficient selection
+    let role: 'retail' | 'wholesale' | 'designer' = customerType === 'retail' ? 'retail' : (customerType === 'designer' ? 'designer' : 'wholesale');
+    
+    // Check brand-specific overrides first
+    if (ownProductionConfig.brandCoefficients) {
+      const match = ownProductionConfig.brandCoefficients.find(bc => bc.categoryId === categoryId && brand.toLowerCase().includes(bc.brand.toLowerCase()));
+      if (match) {
+        if (customerType === 'wholesale' && companyData?.type === 'Мебельное производство') {
+          if (selectedSalonId && match.salonCoeffs?.[selectedSalonId]) {
+            return match.salonCoeffs[selectedSalonId];
+          }
+          return match.standardSalon;
+        }
+        return match[role];
+      }
+    }
+
+    // Fallback to standard coefficients
+    if (customerType === 'wholesale' && companyData?.type === 'Мебельное производство') {
+      if (selectedSalonId && ownProductionConfig.salonCoefficients?.[selectedSalonId]?.[categoryId]) {
+        return ownProductionConfig.salonCoefficients[selectedSalonId][categoryId];
+      }
+      if (ownProductionConfig.standardCoefficients?.[categoryId]) {
+        return ownProductionConfig.standardCoefficients[categoryId];
+      }
+    }
+
+    // Default global coefficients
+    const myMarkup = (coefficients[role] || {}) as any;
+    if (categoryId.startsWith('cat_')) {
+      const catName = categoryId.replace('cat_', '');
+      return myMarkup.products?.[catName] ?? myMarkup[catName] ?? 1.5;
+    }
+    return myMarkup[categoryId] ?? 1.5;
+  };
 
   const totalCostForService = useMemo(() => {
     if (!results) return 0;
@@ -8591,6 +10188,9 @@ export default function App() {
     let total = 0;
     Object.entries(results).forEach(([key, item]: any) => {
       const decor = selectedDecor[key];
+      const itemsInDecor = typeof decor === 'string' ? decor.split('|') : [];
+      const brand = itemsInDecor[0] || '';
+      
       const basePriceKey = typeof decor === 'string' ? decor.replace(' ', '|') : '';
       const isManualMaterial = basePriceKey ? (!configToUse.prices?.[basePriceKey] || configToUse.prices?.[basePriceKey] === 0) : true;
       const priceKey = isManualMaterial ? `manual_${key}` : basePriceKey;
@@ -8600,13 +10200,48 @@ export default function App() {
       const isCustomFacade = item.type === 'Фасад' && facadeType[key] === 'custom';
 
       let coef = 1;
-      if (item.type === 'ЛДСП' || item.type === 'МДФ') coef = currentCoefficients.ldsp;
-      else if (item.type === 'ХДФ') coef = currentCoefficients.hdf;
-      else if (isSheetFacade) coef = currentCoefficients.facadeSheet;
-      else if (isCustomFacade) coef = currentCoefficients.facadeCustom || 1.5;
+      if (item.type === 'ЛДСП' || item.type === 'МДФ') coef = resolveBrandCoefficient('ldsp', brand);
+      else if (item.type === 'ХДФ') coef = resolveBrandCoefficient('hdf', brand);
+      else if (isSheetFacade) coef = resolveBrandCoefficient('facadeSheet', brand);
+      else if (isCustomFacade) coef = resolveBrandCoefficient('facadeCustom', brand);
 
       if (isCustomFacade) {
-        total += item.area * price * coef;
+        const customType = facadeCustomType[key] || 'Пленка';
+        const category = facadeCategory[key] || '';
+        const milling = facadeMilling[key] || '';
+        const thickness = facadeThicknessOverride[key] || item.thickness;
+        
+        let basePrice = 0;
+        let settings = null;
+        if (customType === (configToUse.enamelSettings?.displayName || 'Эмаль')) {
+          settings = configToUse.enamelSettings;
+        } else if (customType === (configToUse.facadeSettings?.displayName || 'Пленка')) {
+          settings = configToUse.facadeSettings;
+        } else {
+          settings = configToUse.extraFacadeTypes?.find((t: any) => t.displayName === customType)?.settings;
+        }
+        
+        if (settings) {
+          const matchingCat = settings.categories?.find((c: any) => c.name === category || c.id === category);
+          const matchingMill = settings.millings?.find((m: any) => m.name === milling || m.id === milling);
+          
+          if (matchingCat && matchingMill) {
+            const gridKey = `${matchingCat.id}:${matchingMill.id}`;
+            basePrice = settings.priceGrid?.[gridKey] || 0;
+            
+            const thickKey = `${thickness}:${matchingMill.id}`;
+            basePrice += (settings.thicknessGrid?.[thickKey] || 0);
+          }
+        }
+
+        const finalRawPrice = basePrice > 0 ? basePrice : price;
+        
+        // APPLY MIN VOLUME CHECK
+        const actualArea = item.area;
+        const minVol = settings?.minOrderVolume || 0;
+        const calculatedArea = actualArea < minVol ? minVol : actualArea;
+        
+        total += calculatedArea * finalRawPrice * coef;
       } else {
         const sheetW = (sheetConfigs[key]?.width || 2800) - (trimming * 2);
         const sheetH = (sheetConfigs[key]?.height || 2070) - (trimming * 2);
@@ -8629,14 +10264,79 @@ export default function App() {
     });
 
     return total;
-  }, [results, selectedDecor, prices, facadeType, sheetConfigs, trimming, kerf, rotations, cuttingType, calcMode, currentCoefficients, addedProducts, addedServices]);
+  }, [results, selectedDecor, prices, facadeType, facadeCustomType, facadeCategory, facadeMilling, facadeThicknessOverride, sheetConfigs, trimming, kerf, rotations, cuttingType, calcMode, currentCoefficients, addedProducts, addedServices, ownProductionConfig, productionSettings]);
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-gray-500 font-medium">Загрузка системы...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-white overflow-hidden">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="relative flex flex-col items-center"
+        >
+          {/* Logo Animation */}
+          <div className="relative w-24 h-24 mb-8">
+            <motion.div 
+              animate={{ 
+                rotate: 360,
+                borderRadius: ["30%", "50%", "30%"],
+              }}
+              transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+              className="absolute inset-0 bg-gradient-to-tr from-indigo-600 to-blue-400 opacity-20 blur-xl"
+            />
+            <motion.div 
+              animate={{ rotate: -360 }}
+              transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+              className="absolute inset-0 border-4 border-indigo-600/30 border-t-indigo-600 rounded-[2rem]"
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Database className="w-10 h-10 text-indigo-600" />
+            </div>
+          </div>
+
+          <motion.h1 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="text-2xl font-black text-gray-900 mb-2 tracking-tight"
+          >
+            Мебельный <span className="text-indigo-600">калькулятор</span>
+          </motion.h1>
+          
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="flex flex-col items-center gap-3"
+          >
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <motion.div
+                  key={i}
+                  animate={{ 
+                    scale: [1, 1.5, 1],
+                    opacity: [0.3, 1, 0.3]
+                  }}
+                  transition={{ 
+                    duration: 1, 
+                    repeat: Infinity, 
+                    delay: i * 0.2 
+                  }}
+                  className="w-1.5 h-1.5 bg-indigo-600 rounded-full"
+                />
+              ))}
+            </div>
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-[0.2em] text-center max-w-xs leading-loose">
+              Синхронизация данных... <br/>
+              <span className="text-[10px] text-gray-300">Кэшируем для работы оффлайн</span>
+            </p>
+          </motion.div>
+        </motion.div>
+
+        {/* Decorative background elements */}
+        <div className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden opacity-40">
+           <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-indigo-50 rounded-full blur-[120px]" />
+           <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-blue-50 rounded-full blur-[120px]" />
         </div>
       </div>
     );
@@ -9073,6 +10773,7 @@ export default function App() {
           />
         ) : activeTab === 'summary' ? (
           <SummaryView 
+            onSummaryCalculated={setCurrentProjectTotal}
             results={results}
             selectedDecor={selectedDecor}
             prices={prices}
@@ -9106,6 +10807,9 @@ export default function App() {
             canEditDelivery={canEditDelivery}
             customerType={customerType}
             setCustomerType={setCustomerType}
+            selectedSalonId={selectedSalonId}
+            setSelectedSalonId={setSelectedSalonId}
+            salonsUsingMe={salonsUsingMe}
             isProduction={companyData?.type === 'Мебельное производство'}
             ownProductionConfig={ownProductionConfig}
             productionFormat={productionFormat}
@@ -9128,6 +10832,8 @@ export default function App() {
             setActiveTab={setActiveTab}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            catalogMaterials={catalogMaterials}
+            resolveBrandCoefficient={resolveBrandCoefficient}
           />
         ) : activeTab === 'projects' ? (
           <ProjectsView 
@@ -9136,11 +10842,14 @@ export default function App() {
             userRole={userRole}
             onLoadProject={(project) => {
               loadProject(project);
-              // Handle multiple project items if needed
             }}
             onOpenSpecification={(project) => {
-              setSelectedProjectForSpec(project);
-              setActiveTab('specification');
+              setSelectedProjectsForCheckout([project]);
+              setIsCheckoutModalOpen(true);
+            }}
+            onCreateSet={(projects) => {
+              setSelectedProjectsForCheckout(projects);
+              setIsCheckoutModalOpen(true);
             }}
             companyType={companyData?.type}
             manufacturerId={companyData?.manufacturerId}
@@ -9180,6 +10889,7 @@ export default function App() {
           <ServicesView 
             onAddService={onAddService} 
             prices={prices} 
+            setPrices={setPrices}
             catalogServices={catalogServices}
             setCatalogServices={setCatalogServices}
           />
@@ -9212,12 +10922,20 @@ export default function App() {
             canEditCabinet={canEditCabinet}
             canEditFacades={canEditFacades}
             catalogServices={catalogServices}
+            setCatalogServices={setCatalogServices}
             productionSettings={productionSettings}
             productionFormat={productionFormat}
-            isProduction={companyData?.type === 'Мебельное производство'}
+            isProduction={companyData?.type === 'Мебельное производство' || productionFormat === 'own'}
             catalogProducts={catalogProducts}
             showAlert={showAlert}
             userRole={userRole}
+            catalogMaterials={catalogMaterials}
+            setCatalogMaterials={setCatalogMaterials}
+            showPrompt={showPrompt}
+            showConfirm={showConfirm}
+            ownProductionConfig={ownProductionConfig}
+            setOwnProductionConfig={setOwnProductionConfig}
+            onSave={saveGeneralSettings}
           />
         ) : activeTab === 'production' && userRole === 'admin' ? (
           <ProductionView 
@@ -9295,6 +11013,10 @@ export default function App() {
             handleToggleUnavailableThickness={handleToggleUnavailableThickness}
             assemblyIncludes={assemblyIncludes}
             setAssemblyIncludes={setAssemblyIncludes}
+            setOwnProductionConfig={setOwnProductionConfig}
+            catalogMaterials={catalogMaterials}
+            catalogServices={catalogServices}
+            catalogProducts={catalogProducts}
           />
         ) : activeTab === 'specification' && selectedProjectForSpec ? (
           <ProjectSpecificationView 
@@ -9365,6 +11087,23 @@ export default function App() {
       </main>
 
       {/* Custom Modal */}
+      {isCheckoutModalOpen && (
+        <ProjectSetCheckoutModal 
+          projects={selectedProjectsForCheckout}
+          onClose={() => setIsCheckoutModalOpen(false)}
+          onSave={finalizeSet}
+          productionCycle={ownProductionConfig.productionCycle || 'working'}
+        />
+      )}
+      
+      {printSetData && (
+        <SpecificationPrintView 
+          projects={printSetData.projects}
+          setData={printSetData.data}
+          onClose={() => setPrintSetData(null)}
+        />
+      )}
+      
       {modal.isOpen && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">

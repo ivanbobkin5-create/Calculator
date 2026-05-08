@@ -566,7 +566,7 @@ export const PRICE_LIST_CATEGORIES = [
   },
   {
     title: "Фасады заказные",
-    brands: ["Пленка", "Эмаль", "AGT SUPRAMATT PUR", "EVOSOFT PUR"]
+    brands: ["AGT SUPRAMATT PUR", "EVOSOFT PUR"]
   },
   {
     title: "Услуги производства",

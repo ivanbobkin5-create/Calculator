@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FolderOpen, Search, Calendar, User, ArrowRight, Trash2, Edit2, FileText, ClipboardList } from 'lucide-react';
+import { FolderOpen, Search, Calendar, User, ArrowRight, Trash2, Edit2, FileText, ClipboardList, Combine, CheckCircle2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { collection, onSnapshot, query, where, orderBy, deleteDoc, doc } from 'firebase/firestore';
@@ -28,7 +28,8 @@ export const ProjectsView = ({
   onOpenSpecification,
   companyType,
   manufacturerId,
-  showConfirm
+  showConfirm,
+  onCreateSet
 }: { 
   companyId?: string; 
   userId?: string; 
@@ -38,11 +39,14 @@ export const ProjectsView = ({
   companyType?: string;
   manufacturerId?: string;
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
+  onCreateSet?: (projects: Project[]) => void;
 }) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<'all' | 'draft' | 'sent' | 'transferred'>('all');
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
 
   useEffect(() => {
     if (!companyId) return;
@@ -75,6 +79,32 @@ export const ProjectsView = ({
     return () => unsubscribe();
   }, [companyId, userId, userRole]);
 
+  const toggleProjectSelection = (e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation();
+    const newSelection = new Set(selectedProjectIds);
+    if (newSelection.has(projectId)) {
+      newSelection.delete(projectId);
+    } else {
+      newSelection.add(projectId);
+    }
+    setSelectedProjectIds(newSelection);
+    if (newSelection.size > 0) {
+      setIsSelectionMode(true);
+    } else {
+      setIsSelectionMode(false);
+    }
+  };
+
+  const handleCreateSet = () => {
+    const selectedProjects = projects.filter(p => selectedProjectIds.has(p.id));
+    if (onCreateSet) {
+      onCreateSet(selectedProjects);
+    }
+    // Reset selection
+    setSelectedProjectIds(new Set());
+    setIsSelectionMode(false);
+  };
+
   const handleDelete = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
     if (!companyId) return;
@@ -106,6 +136,16 @@ export const ProjectsView = ({
           </div>
           
           <div className="flex flex-wrap items-center gap-2">
+            {isSelectionMode && (
+              <button
+                onClick={handleCreateSet}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-100 animate-in zoom-in duration-300"
+              >
+                <Combine className="w-4 h-4" />
+                Создать комплект ({selectedProjectIds.size})
+              </button>
+            )}
+
             <div className="relative w-full md:w-64">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Search className="h-4 w-4 text-gray-400" />
@@ -153,13 +193,27 @@ export const ProjectsView = ({
             {filteredProjects.map((project) => (
               <div 
                 key={project.id}
-                onClick={() => onLoadProject(project)}
-                className="group bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all cursor-pointer relative overflow-hidden"
+                onClick={() => isSelectionMode ? toggleProjectSelection({} as any, project.id) : onLoadProject(project)}
+                className={cn(
+                  "group bg-white p-6 rounded-3xl border transition-all cursor-pointer relative overflow-hidden",
+                  selectedProjectIds.has(project.id) ? "border-indigo-500 ring-2 ring-indigo-500/20 shadow-lg" : "border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200"
+                )}
               >
-                <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-4 right-4 flex items-center gap-2">
+                  <button 
+                    onClick={(e) => toggleProjectSelection(e, project.id)}
+                    className={cn(
+                      "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
+                      selectedProjectIds.has(project.id) 
+                        ? "bg-indigo-600 border-indigo-600 text-white" 
+                        : "bg-white border-gray-200 text-transparent hover:border-indigo-400 opacity-0 group-hover:opacity-100"
+                    )}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                  </button>
                   <button 
                     onClick={(e) => handleDelete(e, project.id)}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                   >
                     <Trash2 className="w-5 h-5" />
                   </button>
