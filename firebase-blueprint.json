@@ -117,6 +117,28 @@
         "accessLevel": { "type": "string", "enum": ["admin", "manager", "worker"] }
       },
       "required": ["name", "email", "role", "accessLevel"]
+    },
+    "FurnitureSet": {
+      "title": "Furniture Set",
+      "description": "Collection of projects",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "contractNumber": { "type": "string" },
+        "contractDate": { "type": "string", "format": "date-time" },
+        "leadTimeDays": { "type": "number" },
+        "readyDate": { "type": "string", "format": "date-time" },
+        "productionCycle": { "type": "string" },
+        "projectIds": { "type": "array" },
+        "totalPrice": { "type": "number" },
+        "clientName": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "sketches": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "projectIds", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -147,6 +169,10 @@
     "/companies/{companyId}/projects/{projectId}": {
       "schema": "Project",
       "description": "Saved projects"
+    },
+    "/companies/{companyId}/sets/{setId}": {
+      "schema": "FurnitureSet",
+      "description": "Saved sets"
     },
     "/companies/{companyId}/employees/{employeeId}": {
       "schema": "Employee",

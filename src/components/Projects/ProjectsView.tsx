@@ -1,9 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import { FolderOpen, Search, Calendar, User, ArrowRight, Trash2, Edit2, FileText, ClipboardList, Combine, CheckCircle2 } from 'lucide-react';
-import { cn } from '../../lib/utils';
-import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { collection, onSnapshot, query, where, orderBy, deleteDoc, doc } from 'firebase/firestore';
-import { ProjectSpecificationModal } from './ProjectSpecificationModal';
+import React, { useState, useEffect } from "react";
+import {
+  FolderOpen,
+  Search,
+  Calendar,
+  User,
+  Plus,
+  ArrowRight,
+  Trash2,
+  Edit2,
+  FileText,
+  ClipboardList,
+  Combine,
+  CheckCircle2,
+} from "lucide-react";
+import { cn } from "../../lib/utils";
+import { db, handleFirestoreError, OperationType } from "../../firebase";
+import {
+  collection,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  deleteDoc,
+  updateDoc,
+  doc,
+} from "firebase/firestore";
+import { ProjectSpecificationModal } from "./ProjectSpecificationModal";
 
 interface Project {
   id: string;
@@ -12,7 +34,7 @@ interface Project {
   createdBy: string;
   createdByName: string;
   data: any;
-  status?: 'draft' | 'sent' | 'transferred';
+  status?: "draft" | "sent" | "transferred";
   sketches?: string[];
   specification?: any;
   sourceCompanyId?: string;
@@ -20,63 +42,139 @@ interface Project {
   transferredAt?: string;
 }
 
-export const ProjectsView = ({ 
-  companyId, 
-  userId, 
-  userRole, 
+export const ProjectsView = ({
+  companyId,
+  userId,
+  userRole,
   onLoadProject,
   onOpenSpecification,
   companyType,
   manufacturerId,
   showConfirm,
-  onCreateSet
-}: { 
-  companyId?: string; 
-  userId?: string; 
+  onCreateSet,
+}: {
+  companyId?: string;
+  userId?: string;
   userRole?: string;
   onLoadProject: (project: Project) => void;
   onOpenSpecification: (project: Project) => void;
   companyType?: string;
   manufacturerId?: string;
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
-  onCreateSet?: (projects: Project[]) => void;
+  onCreateSet?: (projects: Project[], set?: any) => void;
 }) => {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [sets, setSets] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'draft' | 'sent' | 'transferred'>('all');
-  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [loadingSets, setLoadingSets] = useState(true);
+  const [activeFilter, setActiveFilter] = useState<
+    "all" | "draft" | "sent" | "transferred" | "sets"
+  >("all");
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+
+  const handleRenameSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!editingProjectId || !companyId || !editingName.trim()) {
+      setEditingProjectId(null);
+      return;
+    }
+
+    try {
+      await updateDoc(
+        doc(db, "companies", companyId, "projects", editingProjectId),
+        {
+          name: editingName.trim(),
+        },
+      );
+      setEditingProjectId(null);
+    } catch (error) {
+      handleFirestoreError(
+        error,
+        OperationType.UPDATE,
+        `companies/${companyId}/projects/${editingProjectId}`,
+      );
+    }
+  };
 
   useEffect(() => {
     if (!companyId) return;
 
-    let q;
-    if (userRole === 'admin') {
+    let qProjects;
+    let qSets;
+
+    if (userRole === "admin") {
       // Admin sees all projects of the company
-      q = query(
-        collection(db, 'companies', companyId, 'projects'),
-        orderBy('createdAt', 'desc')
+      qProjects = query(
+        collection(db, "companies", companyId, "projects"),
+        orderBy("createdAt", "desc"),
+      );
+      qSets = query(
+        collection(db, "companies", companyId, "sets"),
+        orderBy("createdAt", "desc"),
       );
     } else {
       // Employees see only their own projects
-      q = query(
-        collection(db, 'companies', companyId, 'projects'),
-        where('createdBy', '==', userId),
-        orderBy('createdAt', 'desc')
+      qProjects = query(
+        collection(db, "companies", companyId, "projects"),
+        where("createdBy", "==", userId),
+        orderBy("createdAt", "desc"),
+      );
+      qSets = query(
+        collection(db, "companies", companyId, "sets"),
+        where("createdBy", "==", userId),
+        orderBy("createdAt", "desc"),
       );
     }
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const projs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Project));
-      setProjects(projs);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `companies/${companyId}/projects`);
-      setLoading(false);
-    });
+    const unsubscribeProjects = onSnapshot(
+      qProjects,
+      (snapshot) => {
+        const projs = snapshot.docs.map(
+          (doc) => ({ id: doc.id, ...doc.data() }) as Project,
+        );
+        setProjects(projs);
+        setLoading(false);
+      },
+      (error) => {
+        handleFirestoreError(
+          error,
+          OperationType.LIST,
+          `companies/${companyId}/projects`,
+        );
+        setLoading(false);
+      },
+    );
 
-    return () => unsubscribe();
+    const unsubscribeSets = onSnapshot(
+      qSets,
+      (snapshot) => {
+        const projs = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setSets(projs);
+        setLoadingSets(false);
+      },
+      (error) => {
+        handleFirestoreError(
+          error,
+          OperationType.LIST,
+          `companies/${companyId}/sets`,
+        );
+        setLoadingSets(false);
+      },
+    );
+
+    return () => {
+      unsubscribeProjects();
+      unsubscribeSets();
+    };
   }, [companyId, userId, userRole]);
 
   const toggleProjectSelection = (e: React.MouseEvent, projectId: string) => {
@@ -96,7 +194,9 @@ export const ProjectsView = ({
   };
 
   const handleCreateSet = () => {
-    const selectedProjects = projects.filter(p => selectedProjectIds.has(p.id));
+    const selectedProjects = projects.filter((p) =>
+      selectedProjectIds.has(p.id),
+    );
     if (onCreateSet) {
       onCreateSet(selectedProjects);
     }
@@ -108,22 +208,40 @@ export const ProjectsView = ({
   const handleDelete = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
     if (!companyId) return;
-    
-    showConfirm('Удаление проекта', 'Вы уверены, что хотите удалить этот проект?', async () => {
-      try {
-        await deleteDoc(doc(db, 'companies', companyId, 'projects', projectId));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `companies/${companyId}/projects/${projectId}`);
-      }
-    });
+
+    showConfirm(
+      "Удаление проекта",
+      "Вы уверены, что хотите удалить этот проект?",
+      async () => {
+        try {
+          await deleteDoc(
+            doc(db, "companies", companyId, "projects", projectId),
+          );
+        } catch (error) {
+          handleFirestoreError(
+            error,
+            OperationType.DELETE,
+            `companies/${companyId}/projects/${projectId}`,
+          );
+        }
+      },
+    );
   };
 
-  const filteredProjects = projects.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  const filteredProjects = projects.filter((p) => {
+    const matchesSearch =
+      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.createdByName?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    if (activeFilter === 'all') return matchesSearch;
-    return matchesSearch && (p.status || 'draft') === activeFilter;
+
+    if (activeFilter === "all") return matchesSearch;
+    return matchesSearch && (p.status || "draft") === activeFilter;
+  });
+
+  const filteredSets = sets.filter((s) => {
+    return (
+      s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      s.contractNumber?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
   });
 
   return (
@@ -132,11 +250,13 @@ export const ProjectsView = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-3">
             <FolderOpen className="w-8 h-8 text-blue-600" />
-            <h1 className="text-3xl font-bold text-gray-900">Проекты</h1>
+            <h1 className="text-3xl font-bold text-gray-900">
+              Проекты {activeFilter === "sets" && "и Комплекты"}
+            </h1>
           </div>
-          
+
           <div className="flex flex-wrap items-center gap-2">
-            {isSelectionMode && (
+            {isSelectionMode && activeFilter !== "sets" && (
               <button
                 onClick={handleCreateSet}
                 className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-100 animate-in zoom-in duration-300"
@@ -158,60 +278,190 @@ export const ProjectsView = ({
                 placeholder="Поиск..."
               />
             </div>
-            
+
             <div className="flex bg-gray-100 p-1 rounded-xl">
-              {(['all', 'draft', 'sent', 'transferred'] as const).map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => setActiveFilter(filter)}
-                  className={cn(
-                    "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
-                    activeFilter === filter ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                  )}
-                >
-                  {filter === 'all' ? 'Все' : 
-                   filter === 'draft' ? 'Черновики' : 
-                   filter === 'sent' ? 'Оформленные' : 'Переданные'}
-                </button>
-              ))}
+              {(["all", "draft", "sent", "transferred", "sets"] as const).map(
+                (filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => {
+                      setActiveFilter(filter);
+                      setIsSelectionMode(false);
+                      setSelectedProjectIds(new Set());
+                    }}
+                    className={cn(
+                      "px-4 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
+                      activeFilter === filter
+                        ? "bg-white text-blue-600 shadow-sm"
+                        : "text-gray-500 hover:text-gray-700",
+                    )}
+                  >
+                    {filter === "all"
+                      ? "Все"
+                      : filter === "draft"
+                        ? "Черновики"
+                        : filter === "sent"
+                          ? "Оформленные"
+                          : filter === "sets"
+                            ? "Комплекты"
+                            : "Переданные"}
+                  </button>
+                ),
+              )}
             </div>
           </div>
         </div>
 
-        {loading ? (
+        {activeFilter === "sets" ? (
+          loadingSets ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : filteredSets.length === 0 ? (
+            <div className="bg-white p-12 rounded-3xl border border-gray-100 text-center shadow-sm">
+              <Combine className="w-16 h-16 text-gray-200 mx-auto mb-4" />
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                Комплектов не найдено
+              </h2>
+              <p className="text-gray-500">
+                В этой категории пока нет комплектов
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredSets.map((set) => (
+                <div
+                  key={set.id}
+                  className="group bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-indigo-200 transition-all relative overflow-hidden"
+                >
+                  <div className="absolute top-4 right-4 flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // This will trigger 'add to set' flow
+                        if (!companyId) return;
+
+                        // Select projects from the set and switch to selection mode
+                        const newSelection = new Set<string>(
+                          set.projectIds || [],
+                        );
+                        setSelectedProjectIds(newSelection);
+                        setIsSelectionMode(true);
+                        setActiveFilter("all");
+                      }}
+                      title="Выбрать комплекты и дособрать..."
+                      className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Open specification immediately
+                        const setProjects = projects.filter((p) =>
+                          (set.projectIds || []).includes(p.id),
+                        );
+                        if (onCreateSet && setProjects.length > 0) {
+                          onCreateSet(setProjects, set);
+                        }
+                      }}
+                      title="Открыть спецификацию"
+                      className="p-2 text-green-600 hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <FileText className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!companyId) return;
+                        showConfirm(
+                          "Удаление комплекта",
+                          "Вы уверены, что хотите удалить комплект?",
+                          async () => {
+                            try {
+                              await deleteDoc(
+                                doc(db, "companies", companyId, "sets", set.id),
+                              );
+                            } catch (error) {
+                              handleFirestoreError(
+                                error,
+                                OperationType.DELETE,
+                                `companies/${companyId}/sets/${set.id}`,
+                              );
+                            }
+                          },
+                        );
+                      }}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-start gap-4 mb-4">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white">
+                      <Combine className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0 pr-24">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-bold text-gray-900 truncate group-hover:text-indigo-600 transition-colors min-w-0">
+                          {set.name || "Комплект"}
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 flex-shrink-0">
+                          {set.projectIds?.length || 0} шт
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        Сумма: {(set.totalPrice || 0).toLocaleString()} ₽
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : loading ? (
           <div className="flex items-center justify-center h-64">
             <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : filteredProjects.length === 0 ? (
           <div className="bg-white p-12 rounded-3xl border border-gray-100 text-center shadow-sm">
             <FileText className="w-16 h-16 text-gray-200 mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Проектов не найдено</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Проектов не найдено
+            </h2>
             <p className="text-gray-500">В этой категории пока нет проектов</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredProjects.map((project) => (
-              <div 
+              <div
                 key={project.id}
-                onClick={() => isSelectionMode ? toggleProjectSelection({} as any, project.id) : onLoadProject(project)}
+                onClick={() =>
+                  isSelectionMode
+                    ? toggleProjectSelection({} as any, project.id)
+                    : onLoadProject(project)
+                }
                 className={cn(
                   "group bg-white p-6 rounded-3xl border transition-all cursor-pointer relative overflow-hidden",
-                  selectedProjectIds.has(project.id) ? "border-indigo-500 ring-2 ring-indigo-500/20 shadow-lg" : "border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200"
+                  selectedProjectIds.has(project.id)
+                    ? "border-indigo-500 ring-2 ring-indigo-500/20 shadow-lg"
+                    : "border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200",
                 )}
               >
                 <div className="absolute top-4 right-4 flex items-center gap-2">
-                  <button 
+                  <button
                     onClick={(e) => toggleProjectSelection(e, project.id)}
                     className={cn(
                       "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
-                      selectedProjectIds.has(project.id) 
-                        ? "bg-indigo-600 border-indigo-600 text-white" 
-                        : "bg-white border-gray-200 text-transparent hover:border-indigo-400 opacity-0 group-hover:opacity-100"
+                      selectedProjectIds.has(project.id)
+                        ? "bg-indigo-600 border-indigo-600 text-white"
+                        : "bg-white border-gray-200 text-transparent hover:border-indigo-400 opacity-0 group-hover:opacity-100",
                     )}
                   >
                     <CheckCircle2 className="w-4 h-4" />
                   </button>
-                  <button 
+                  <button
                     onClick={(e) => handleDelete(e, project.id)}
                     className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                   >
@@ -220,34 +470,67 @@ export const ProjectsView = ({
                 </div>
 
                 <div className="flex items-start gap-4 mb-4">
-                  <div className={cn(
-                    "w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all",
-                    project.status === 'sent' ? "bg-orange-50 text-orange-600" :
-                    project.status === 'transferred' ? "bg-green-50 text-green-600" :
-                    "bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white"
-                  )}>
+                  <div
+                    className={cn(
+                      "w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all",
+                      project.status === "sent"
+                        ? "bg-orange-50 text-orange-600"
+                        : project.status === "transferred"
+                          ? "bg-green-50 text-green-600"
+                          : "bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white",
+                    )}
+                  >
                     <FileText className="w-6 h-6" />
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 pr-16">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors">
-                        {project.name}
-                      </h3>
-                      {project.status && project.status !== 'draft' && (
-                        <span className={cn(
-                          "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider",
-                          project.status === 'sent' ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"
-                        )}>
-                          {project.status === 'sent' ? 'Оформлен' : 'Передан'}
+                      {editingProjectId === project.id ? (
+                        <form
+                          onSubmit={handleRenameSubmit}
+                          className="flex-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onBlur={() => handleRenameSubmit()}
+                            className="w-full px-2 py-1 text-sm font-bold border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                          />
+                        </form>
+                      ) : (
+                        <h3
+                          className="font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors cursor-text min-w-0"
+                          title="Нажмите, чтобы переименовать"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingProjectId(project.id);
+                            setEditingName(project.name);
+                          }}
+                        >
+                          {project.name}
+                        </h3>
+                      )}
+                      {project.status && project.status !== "draft" && (
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider flex-shrink-0",
+                            project.status === "sent"
+                              ? "bg-orange-100 text-orange-700"
+                              : "bg-green-100 text-green-700",
+                          )}
+                        >
+                          {project.status === "sent" ? "Оформлен" : "Передан"}
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 text-xs text-gray-400">
                       <Calendar className="w-3 h-3" />
-                      {new Date(project.createdAt).toLocaleDateString('ru-RU', { 
-                        day: 'numeric', 
-                        month: 'short', 
-                        year: 'numeric'
+                      {new Date(project.createdAt).toLocaleDateString("ru-RU", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
                       })}
                     </div>
                   </div>
@@ -256,15 +539,15 @@ export const ProjectsView = ({
                 <div className="flex items-center justify-between pt-4 border-t border-gray-50">
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500">
-                      {project.createdByName?.charAt(0) || 'U'}
+                      {project.createdByName?.charAt(0) || "U"}
                     </div>
                     <span className="text-xs text-gray-500 font-medium truncate max-w-[120px]">
-                      {project.createdByName || 'Пользователь'}
+                      {project.createdByName || "Пользователь"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {(userRole === 'manager' || userRole === 'admin') && (
-                      <button 
+                    {(userRole === "manager" || userRole === "admin") && (
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenSpecification(project);
@@ -272,7 +555,10 @@ export const ProjectsView = ({
                         className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-all flex items-center gap-1 text-[10px] font-bold"
                       >
                         <ClipboardList className="w-4 h-4" />
-                        {project.status === 'sent' || project.status === 'transferred' ? 'Спецификация' : 'Оформить'}
+                        {project.status === "sent" ||
+                        project.status === "transferred"
+                          ? "Спецификация"
+                          : "Оформить"}
                       </button>
                     )}
                     <div className="flex items-center gap-1 text-blue-600 text-xs font-bold group-hover:translate-x-1 transition-transform">

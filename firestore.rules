@@ -151,6 +151,24 @@ service cloud.firestore {
              data.accessLevel in ['admin', 'manager', 'worker'];
     }
 
+    function isValidFurnitureSet(data) {
+      return data.keys().hasAll(['id', 'name', 'projectIds', 'createdAt', 'updatedAt']) &&
+             data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.projectIds is list &&
+             data.createdAt is string &&
+             data.updatedAt is string &&
+             (!('contractNumber' in data) || data.contractNumber is string) &&
+             (!('contractDate' in data) || data.contractDate is string) &&
+             (!('leadTimeDays' in data) || data.leadTimeDays is number) &&
+             (!('readyDate' in data) || data.readyDate is string) &&
+             (!('productionCycle' in data) || data.productionCycle in ['working', 'calendar']) &&
+             (!('totalPrice' in data) || data.totalPrice is number) &&
+             (!('clientName' in data) || data.clientName is string) &&
+             (!('clientPhone' in data) || data.clientPhone is string) &&
+             (!('sketches' in data) || data.sketches is list);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -207,6 +225,12 @@ service cloud.firestore {
         allow read: if belongsToCompany(companyId) || isAppAdmin();
         allow create, update: if (isAdmin() && belongsToCompany(companyId) && isNotBlocked(companyId) && isValidEmployee(request.resource.data)) || isAppAdmin();
         allow delete: if (isAdmin() && belongsToCompany(companyId) && isNotBlocked(companyId)) || isAppAdmin();
+      }
+
+      match /sets/{setId} {
+        allow read: if belongsToCompany(companyId) || isAppAdmin();
+        allow create, update: if (isWorker() && belongsToCompany(companyId) && isNotBlocked(companyId) && isValidFurnitureSet(request.resource.data)) || isAppAdmin();
+        allow delete: if (isManager() && belongsToCompany(companyId) && isNotBlocked(companyId)) || isAppAdmin();
       }
     }
   }

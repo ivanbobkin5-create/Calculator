@@ -19,6 +19,7 @@ export default defineConfig(({mode}) => {
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
           navigateFallback: '/index.html',
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -84,20 +85,6 @@ export default defineConfig(({mode}) => {
       outDir: 'dist',
       emptyOutDir: true,
       sourcemap: false,
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('firebase')) return 'firebase';
-              if (id.includes('react')) return 'react-vendor';
-              if (id.includes('lucide')) return 'lucide';
-              if (id.includes('konva')) return 'konva';
-              if (id.includes('motion')) return 'motion';
-              return 'vendor';
-            }
-          }
-        }
-      }
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
