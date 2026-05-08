@@ -2969,7 +2969,7 @@ const PriceView = ({
                                       inputMode="decimal"
                                       value={prices[priceKey] || ""}
                                       onFocus={(e) => e.target.select()}
-                                      onChange={async (e) => {
+                                      onChange={(e) => {
                                         const v = e.target.value.replace(
                                           ",",
                                           ".",
@@ -2981,35 +2981,19 @@ const PriceView = ({
                                             ...prev,
                                             [priceKey]: newPrice,
                                           }));
-
-                                          // Save to global prices
-                                          const companyId =
-                                            (auth.currentUser as any)
-                                              ?.companyId ||
-                                            auth.currentUser?.uid;
-                                          if (
-                                            companyId &&
-                                            (userRole === "admin" ||
-                                              userRole === "manager")
-                                          ) {
+                                        }
+                                      }}
+                                      onBlur={async (e) => {
+                                          const v = e.target.value.replace(",", ".");
+                                          const newPrice = v === "" ? 0 : parseFloat(v);
+                                          const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
+                                          if (companyId && (userRole === "admin" || userRole === "manager")) {
                                             await setDoc(
-                                              doc(
-                                                db,
-                                                "companies",
-                                                companyId,
-                                                "settings",
-                                                "prices",
-                                              ),
-                                              {
-                                                prices: {
-                                                  ...prices,
-                                                  [priceKey]: newPrice,
-                                                },
-                                              },
-                                              { merge: true },
+                                              doc(db, "companies", companyId, "settings", "prices"),
+                                              { prices: { ...prices, [priceKey]: newPrice } },
+                                              { merge: true }
                                             );
                                           }
-                                        }
                                       }}
                                       placeholder="0"
                                       disabled={!canEdit}
@@ -3059,71 +3043,9 @@ const PriceView = ({
                             )
                           );
                         })
-                        .map((product) => {
-                          // Format display price to remove excessive decimals but keep it as a number 
-                          // to avoid precision issues. However, if it's currently being edited 
-                          // (this is hard without local state, so we just use the raw value if it's not a crazy decimal)
-                          // Assuming products have simple prices, but generated ones might have long decimals.
-                          let displayPrice = product.price;
-                          if (typeof displayPrice === 'number' && !Number.isInteger(displayPrice)) {
-                             displayPrice = Number(displayPrice.toFixed(2));
-                          }
-                          
-                          return (
-                          <div
-                            key={product.id}
-                            className="flex items-center justify-between p-3 hover:bg-emerald-50/30 transition-colors group"
-                          >
-                            <div className="flex-1 min-w-0 pr-4">
-                              <div
-                                className="text-xs font-bold text-gray-700 truncate"
-                                title={product.name}
-                              >
-                                {product.name}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 w-32 shrink-0">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                value={displayPrice ?? ""}
-                                onFocus={(e) => e.target.select()}
-                                onChange={async (e) => {
-                                  const v = e.target.value.replace(",", ".");
-                                  // Allow trailing dot during typing by not updating DB immediately if it ends in dot, 
-                                  // actually just let standard parsing work. A trailing dot is stripped by parseFloat,
-                                  // but to support typing decimals properly without local state, we can only do so much.
-                                  // We will just let them type normally.
-                                  if (v === "" || /^\d*\.?\d*$/.test(v)) {
-                                    const newPrice =
-                                      v === "" ? 0 : parseFloat(v);
-                                    const companyId =
-                                      (auth.currentUser as any)?.companyId ||
-                                      auth.currentUser?.uid;
-                                    if (companyId) {
-                                      await setDoc(
-                                        doc(
-                                          db,
-                                          "companies",
-                                          companyId,
-                                          "products",
-                                          String(product.id),
-                                        ),
-                                        { price: newPrice },
-                                        { merge: true },
-                                      );
-                                    }
-                                  }
-                                }}
-                                placeholder="0"
-                                className="w-full text-right text-xs border-b border-gray-200 focus:border-emerald-500 outline-none py-1 font-bold bg-transparent text-gray-900 group-hover:border-emerald-300 transition-colors"
-                              />
-                              <span className="text-[10px] text-gray-400 whitespace-nowrap w-8">
-                                ₽/{product.unit || "шт"}
-                              </span>
-                            </div>
-                          </div>
-                        )})}
+                        .map((product) => (
+                          <ProductPriceInputRow key={product.id} product={product} auth={auth} db={db} />
+                        ))}
                     </div>
                   </div>
                 </div>
@@ -12313,6 +12235,68 @@ const ProductsView = ({
           </p>
         </div>
       )}
+    </div>
+  );
+};
+
+const ProductPriceInputRow = ({ product, auth, db }: { product: any, auth: any, db: any }) => {
+  const [localPrice, setLocalPrice] = useState<string>(
+    product.price !== undefined ? String(product.price) : ""
+  );
+
+  useEffect(() => {
+    // Sync external changes (e.g. from DB) if they don't match the active input
+    if (parseFloat(localPrice) !== product.price && (localPrice !== "" || product.price !== 0)) {
+      let displayPrice = product.price;
+      if (typeof displayPrice === 'number' && !Number.isInteger(displayPrice)) {
+         displayPrice = Number(displayPrice.toFixed(2));
+      }
+      setLocalPrice(displayPrice !== undefined ? String(displayPrice) : "");
+    }
+  }, [product.price]);
+
+  return (
+    <div className="flex items-center justify-between p-3 hover:bg-emerald-50/30 transition-colors group">
+      <div className="flex-1 min-w-0 pr-4">
+        <div
+          className="text-xs font-bold text-gray-700 truncate"
+          title={product.name}
+        >
+          {product.name}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 w-32 shrink-0">
+        <input
+          type="text"
+          inputMode="decimal"
+          value={localPrice}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            const v = e.target.value.replace(",", ".");
+            if (v === "" || /^\d*\.?\d*$/.test(v)) {
+              setLocalPrice(v);
+            }
+          }}
+          onBlur={async () => {
+            const newPrice = localPrice === "" ? 0 : parseFloat(localPrice);
+            if (!isNaN(newPrice) && newPrice !== product.price) {
+              const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
+              if (companyId) {
+                await setDoc(
+                  doc(db, "companies", companyId, "products", String(product.id)),
+                  { price: newPrice },
+                  { merge: true }
+                );
+              }
+            }
+          }}
+          placeholder="0"
+          className="w-full text-right text-xs border-b border-gray-200 focus:border-emerald-500 outline-none py-1 font-bold bg-transparent text-gray-900 group-hover:border-emerald-300 transition-colors"
+        />
+        <span className="text-[10px] text-gray-400 whitespace-nowrap w-8">
+          ₽/{product.unit || "шт"}
+        </span>
+      </div>
     </div>
   );
 };
