@@ -8395,14 +8395,14 @@ const ProductsView = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {filteredProducts.map(product => {
             const displayImage = product.images?.[0] || product.image;
             return (
-              <div key={product.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col relative">
+              <div key={product.id} className="bg-white rounded-[20px] border border-gray-100 shadow-sm overflow-hidden group hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col relative">
                   <div 
                     onClick={() => setSelectedProductForDetail(product)}
-                    className="relative h-56 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer group"
+                    className="relative h-40 sm:h-48 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer group"
                   >
                     {displayImage ? (
                       <img 
@@ -8458,10 +8458,10 @@ const ProductsView = ({
                   )}
                 </div>
 
-                <div className="p-6 flex-1 flex flex-col">
+                <div className="p-4 flex-1 flex flex-col">
                   <div className="flex-1">
                     <div className="flex items-start justify-between gap-2 mb-2">
-                      <h3 className="font-bold text-gray-900 line-clamp-2 leading-snug">{product.name}</h3>
+                      <h3 className="font-bold text-sm text-gray-900 line-clamp-2 leading-snug">{product.name}</h3>
                     </div>
                     {product.color && (
                       <div className="flex items-center gap-1.5 mb-1">
