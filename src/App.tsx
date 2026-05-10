@@ -2963,51 +2963,16 @@ const PriceView = ({
                                   >
                                     {decor}
                                   </div>
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="text"
-                                      inputMode="decimal"
-                                      value={prices[priceKey] || ""}
-                                      onFocus={(e) => e.target.select()}
-                                      onChange={(e) => {
-                                        const v = e.target.value.replace(
-                                          ",",
-                                          ".",
-                                        );
-                                        if (v === "" || /^\d*\.?\d*$/.test(v)) {
-                                          const newPrice =
-                                            v === "" ? 0 : parseFloat(v);
-                                          setPrices((prev) => ({
-                                            ...prev,
-                                            [priceKey]: newPrice,
-                                          }));
-                                        }
-                                      }}
-                                      onBlur={async (e) => {
-                                          const v = e.target.value.replace(",", ".");
-                                          const newPrice = v === "" ? 0 : parseFloat(v);
-                                          const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
-                                          if (companyId && (userRole === "admin" || userRole === "manager")) {
-                                            await setDoc(
-                                              doc(db, "companies", companyId, "settings", "prices"),
-                                              { prices: { ...prices, [priceKey]: newPrice } },
-                                              { merge: true }
-                                            );
-                                          }
-                                      }}
-                                      placeholder="0"
-                                      disabled={!canEdit}
-                                      className={cn(
-                                        "w-full text-xs border-b border-gray-100 focus:border-blue-500 outline-none py-0.5 px-0.5 font-bold transition-colors",
-                                        canEdit
-                                          ? "group-hover:bg-blue-50/20 text-gray-900"
-                                          : "bg-gray-50 text-gray-400 cursor-not-allowed",
-                                      )}
-                                    />
-                                    <span className="text-[9px] text-gray-400 font-bold">
-                                      ₽
-                                    </span>
-                                  </div>
+                                  <PriceInputWithSave 
+                                    priceKey={priceKey}
+                                    value={prices[priceKey] || 0}
+                                    setPrices={setPrices}
+                                    db={db}
+                                    auth={auth}
+                                    userRole={userRole}
+                                    canEdit={canEdit}
+                                    prices={prices}
+                                  />
                                 </div>
                               );
                             })}
@@ -12301,6 +12266,137 @@ const ProductPriceInputRow = ({ product, auth, db }: { product: any, auth: any, 
   );
 };
 
+const PriceInputWithSave = ({ 
+  priceKey, 
+  value, 
+  setPrices, 
+  db, 
+  auth, 
+  userRole, 
+  canEdit, 
+  prices 
+}: { 
+  priceKey: string, 
+  value: number, 
+  setPrices: any, 
+  db: any, 
+  auth: any, 
+  userRole?: string | null, 
+  canEdit: boolean,
+  prices: any
+}) => {
+  const [localVal, setLocalVal] = useState(String(value || ""));
+
+  useEffect(() => {
+    setLocalVal(String(value || ""));
+  }, [value]);
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={localVal}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => {
+          const v = e.target.value.replace(",", ".");
+          if (v === "" || /^\d*\.?\d*$/.test(v)) {
+            setLocalVal(v);
+            // Still update parent state so calculator reacts, but we'll use onBlur forFirestore
+            setPrices((prev: any) => ({
+              ...prev,
+              [priceKey]: v === "" ? 0 : parseFloat(v),
+            }));
+          }
+        }}
+        onBlur={async () => {
+          const newPrice = localVal === "" ? 0 : parseFloat(localVal);
+          const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
+          if (companyId && (userRole === "admin" || userRole === "manager")) {
+            await setDoc(
+              doc(db, "companies", companyId, "settings", "prices"),
+              { prices: { ...prices, [priceKey]: newPrice } },
+              { merge: true }
+            );
+          }
+        }}
+        placeholder="0"
+        disabled={!canEdit}
+        className={cn(
+          "w-full text-xs border-b border-gray-100 focus:border-blue-500 outline-none py-0.5 px-0.5 font-bold transition-colors",
+          canEdit
+            ? "group-hover:bg-blue-50/20 text-gray-900"
+            : "bg-gray-50 text-gray-400 cursor-not-allowed",
+        )}
+      />
+      <span className="text-[9px] text-gray-400 font-bold">
+        ₽
+      </span>
+    </div>
+  );
+};
+
+const EdgePriceInputWithSave = ({ 
+  priceKey, 
+  value, 
+  setEdgePrices, 
+  db, 
+  auth, 
+  userRole, 
+  canEdit, 
+  edgePrices 
+}: { 
+  priceKey: string, 
+  value: number, 
+  setEdgePrices: any, 
+  db: any, 
+  auth: any, 
+  userRole?: string | null, 
+  canEdit: boolean,
+  edgePrices: any
+}) => {
+  const [localVal, setLocalVal] = useState(String(value || ""));
+
+  useEffect(() => {
+    setLocalVal(String(value || ""));
+  }, [value]);
+
+  return (
+    <div className="relative group/cell">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={localVal === "0" ? "" : localVal}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => {
+          const v = e.target.value.replace(",", ".");
+          if (v === "" || /^\d*\.?\d*$/.test(v)) {
+            setLocalVal(v);
+            setEdgePrices((prev: any) => ({
+              ...prev,
+              [priceKey]: v === "" ? 0 : parseFloat(v),
+            }));
+          }
+        }}
+        onBlur={async () => {
+          const newPrice = localVal === "" ? 0 : parseFloat(localVal);
+          const companyId = (auth.currentUser as any)?.companyId || auth.currentUser?.uid;
+          if (companyId && (userRole === "admin" || userRole === "manager")) {
+             // Edge prices are shared in the same settings/prices doc
+             await setDoc(
+               doc(db, "companies", companyId, "settings", "prices"),
+               { edgePrices: { ...edgePrices, [priceKey]: newPrice } },
+               { merge: true }
+             );
+          }
+        }}
+        className="w-full h-14 p-4 text-center text-sm font-bold text-blue-600 bg-transparent outline-none focus:ring-2 focus:ring-blue-500 focus:bg-blue-50/30 transition-all"
+        placeholder="0"
+      />
+    </div>
+  );
+};
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register" | "landing">(
@@ -13933,7 +14029,7 @@ export default function App() {
       if (currentProjectName) {
         timer = setTimeout(() => {
           saveProject(currentProjectName, true);
-        }, 1500);
+        }, 12000);
       }
       
       return () => {

@@ -87,6 +87,39 @@ const CompanyDateInput = ({ company, updateLimit }: { company: Company, updateLi
   );
 };
 
+const CompanyLimitInput = ({ 
+  company, 
+  field, 
+  updateLimit 
+}: { 
+  company: Company, 
+  field: 'employeeLimit' | 'productLimit', 
+  updateLimit: any 
+}) => {
+  const [localVal, setLocalVal] = useState(String(company[field] || 0));
+
+  useEffect(() => {
+    setLocalVal(String(company[field] || 0));
+  }, [company[field]]);
+
+  const handleBlur = () => {
+    const val = parseInt(localVal);
+    if (!isNaN(val) && val !== company[field]) {
+      updateLimit(company.id, field, val);
+    }
+  };
+
+  return (
+    <input 
+      type="number"
+      value={localVal}
+      onChange={(e) => setLocalVal(e.target.value)}
+      onBlur={handleBlur}
+      className="w-16 bg-transparent font-bold text-gray-900 outline-none"
+    />
+  );
+};
+
 export const AppAdminView = () => {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -414,22 +447,12 @@ export const AppAdminView = () => {
                       <div className="flex items-center gap-4 bg-gray-50 p-2 rounded-2xl border border-gray-100">
                         <div className="px-3">
                           <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Лимит сотр.</label>
-                          <input 
-                            type="number"
-                            value={company.employeeLimit || 5}
-                            onChange={(e) => updateLimit(company.id, 'employeeLimit', parseInt(e.target.value))}
-                            className="w-16 bg-transparent font-bold text-gray-900 outline-none"
-                          />
+                          <CompanyLimitInput company={company} field="employeeLimit" updateLimit={updateLimit} />
                         </div>
                         <div className="w-px h-8 bg-gray-200"></div>
                         <div className="px-3">
                           <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Лимит тов.</label>
-                          <input 
-                            type="number"
-                            value={company.productLimit || 100}
-                            onChange={(e) => updateLimit(company.id, 'productLimit', parseInt(e.target.value))}
-                            className="w-16 bg-transparent font-bold text-gray-900 outline-none"
-                          />
+                          <CompanyLimitInput company={company} field="productLimit" updateLimit={updateLimit} />
                         </div>
                         <div className="w-px h-8 bg-gray-200"></div>
                         <div className="px-3">
