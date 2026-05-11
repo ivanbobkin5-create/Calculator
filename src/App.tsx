@@ -86,9 +86,12 @@ import {
   Globe,
   Send,
   ClipboardList,
+  ClipboardCheck,
   UserX,
   Maximize2,
   Building2,
+  ToggleRight,
+  ToggleLeft,
   Settings as SettingsIcon,
   AlertTriangle,
   Layers,
@@ -111,6 +114,7 @@ import {
   where,
   getDocFromServer,
   deleteDoc,
+  writeBatch,
 } from "firebase/firestore";
 import {
   LDSP_DATABASE,
@@ -5446,6 +5450,7 @@ const SummaryView = ({
   gluedEdgeDecor,
   setGluedEdgeDecor,
   updateAddedProductQty,
+  setAddedProductQty,
   removeAddedProduct,
   setActiveTab,
   showAlert,
@@ -5514,6 +5519,7 @@ const SummaryView = ({
     React.SetStateAction<Record<string, string>>
   >;
   updateAddedProductQty: (productId: string | number, delta: number) => void;
+  setAddedProductQty: (productId: string | number, newQty: any) => void;
   removeAddedProduct: (productId: string | number) => void;
   setActiveTab: (tab: any) => void;
   showAlert: (title: string, message: string) => void;
@@ -5545,14 +5551,30 @@ const SummaryView = ({
       ? productionSettings.production
       : ownProductionConfig;
 
-  const summaryRows = results
-    ? Object.entries(results).flatMap(([key, item]: any) => {
+  const materialKeys = results ? Object.keys(results) : [];
+  const sortedMaterialKeys = materialKeys.sort((a, b) => {
+    const itemA = results[a];
+    const itemB = results[b];
+    const getOrderWeight = (item: any) => {
+      if (!item) return 100;
+      const type = item.type;
+      const name = (item.name || "").toLowerCase();
+      if (type === "ЛДСП" || type === "МДФ" || name.includes("лдсп")) return 1;
+      if (type === "ХДФ" || name.includes("хдф")) return 2;
+      if (type === "Фасад") return 3;
+      return 10;
+    };
+    return getOrderWeight(itemA) - getOrderWeight(itemB);
+  });
+
+  const summaryRows: any[] = results
+    ? sortedMaterialKeys.flatMap((key) => {
+        const item = results[key];
         const rows: any[] = [];
 
         // Skip if it's merged INTO another material
         if (mergedMaterials[key]) return [];
 
-        // Material Row
         const decor = selectedDecor[key];
         const basePriceKey =
           typeof decor === "string" ? decor.replace(/ /g, "|") : "";
@@ -6137,7 +6159,7 @@ const SummaryView = ({
       deliveryFee += deliveryTariffs?.extraLoaderPrice || 0;
     }
 
-    const finalDeliveryFee = Math.round(deliveryFee * deliveryCoef);
+  const finalDeliveryFee = Math.round(deliveryFee * deliveryCoef);
     summaryRows.push({
       type: "service",
       name: "Доставка на объект",
@@ -6150,6 +6172,10 @@ const SummaryView = ({
     });
     totalCost += finalDeliveryFee;
   }
+
+  const materialsSubtotalValue = summaryRows
+    .filter((r) => ["material", "edge", "hardware"].includes(r.type))
+    .reduce((sum, r) => sum + r.total, 0);
 
   const [showChecklistWindow, setShowChecklistWindow] = useState(false);
 
@@ -6637,6 +6663,20 @@ const SummaryView = ({
                 );
               })}
 
+            {/* Итого по материалам */}
+            <tr className="bg-blue-50/20 border-t border-gray-200">
+              <td colSpan={4} className="px-6 py-3 text-right">
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Итого по материалам:
+                </span>
+              </td>
+              <td className="px-6 py-3 text-right">
+                <span className="text-lg font-black text-blue-600">
+                  {materialsSubtotalValue.toLocaleString()} ₽
+                </span>
+              </td>
+            </tr>
+
             {summaryRows.some(
               (r) => r.type === "product" || r.type === "product_edge",
             ) && (
@@ -6756,9 +6796,15 @@ const SummaryView = ({
                               >
                                 <Minus className="w-3 h-3" />
                               </button>
-                              <span className="font-bold text-gray-900 w-5 text-center">
-                                {String(row.qty).replace(" шт", "")}
-                              </span>
+                            <input
+                              type="number"
+                              value={row.qty === "" ? "" : row.qty.toString().replace(" шт", "")}
+                              onChange={(e) => {
+                                setAddedProductQty(row.key || row.id!, e.target.value);
+                              }}
+                              onFocus={(e) => e.target.select()}
+                              className="w-10 text-center font-bold text-gray-900 bg-transparent outline-none focus:text-blue-600 transition-colors"
+                            />
                               <button
                                 onClick={() =>
                                   updateAddedProductQty(row.key || row.id!, 1)
@@ -6886,6 +6932,18 @@ const SummaryView = ({
             </tr>
           </tfoot>
         </table>
+
+        {finalTotal > 0 && (
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={() => setActiveTab("checkout_current")}
+              className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg shadow-blue-100 hover:bg-blue-700 hover:scale-[1.02] transition-all"
+            >
+              <ClipboardCheck className="w-6 h-6" />
+              Оформить спецификацию
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Service Info Summary */}
@@ -9230,7 +9288,7 @@ const ServicesView = ({
   catalogServices: any[];
   setCatalogServices: React.Dispatch<React.SetStateAction<any[]>>;
 }) => {
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [quantities, setQuantities] = useState<Record<string, any>>({});
   const [customDeliverySupplier, setCustomDeliverySupplier] = useState("");
   const [customDeliveryPrice, setCustomDeliveryPrice] = useState(0);
   const [newService, setNewService] = useState({
@@ -9394,13 +9452,14 @@ const ServicesView = ({
               </button>
               <input
                 type="number"
-                value={quantities["custom-delivery"] || 1}
-                onChange={(e) =>
+                value={quantities["custom-delivery"] === undefined ? 1 : quantities["custom-delivery"]}
+                onChange={(e) => {
+                  const val = e.target.value;
                   setQuantities((prev) => ({
                     ...prev,
-                    "custom-delivery": parseInt(e.target.value) || 1,
-                  }))
-                }
+                    "custom-delivery": val === "" ? "" : (parseInt(val) || 0),
+                  }));
+                }}
                 className="w-16 text-center bg-transparent font-bold text-gray-800 outline-none"
               />
               <button
@@ -9945,7 +10004,7 @@ const ProductsView = ({
     null,
   );
   const [lightingSubFilter, setLightingSubFilter] = useState<string | null>(null);
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [quantities, setQuantities] = useState<Record<string, any>>({});
   const [isAddingProduct, setIsAddingProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
 
@@ -12157,9 +12216,18 @@ const ProductsView = ({
                         >
                           <Minus className="w-4 h-4" />
                         </button>
-                        <span className="w-8 text-center font-bold text-sm">
-                          {quantities[product.id] || 1}
-                        </span>
+                        <input
+                          type="number"
+                          value={quantities[product.id] === undefined ? 1 : quantities[product.id]}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setQuantities((prev) => ({
+                              ...prev,
+                              [product.id]: val === "" ? "" : (parseInt(val) || 0),
+                            }));
+                          }}
+                          className="w-10 text-center font-bold text-sm bg-transparent outline-none focus:text-blue-600 transition-colors"
+                        />
                         <button
                           onClick={() =>
                             setQuantities((prev) => ({
@@ -12403,7 +12471,7 @@ export default function App() {
     "landing",
   );
   const [userRole, setUserRole] = useState<
-    "admin" | "manager" | "worker" | null
+    "admin" | "supervisor" | "manager" | "worker" | null
   >(null);
   const [userData, setUserData] = useState<any>(null);
   const showAlert = (title: string, message: string) => {
@@ -12697,6 +12765,20 @@ export default function App() {
 
   const [selectedSalonId, setSelectedSalonId] = useState<string>("");
   const [currentProjectTotal, setCurrentProjectTotal] = useState(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("mebcalc_autosave");
+    return saved === null ? true : saved === "true";
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [lastSavedHash, setLastSavedHash] = useState<string>("");
+  const isFirstLoad = React.useRef(true);
+  const lastWriteAt = React.useRef<number>(0);
+
+  useEffect(() => {
+    localStorage.setItem("mebcalc_autosave", autoSaveEnabled.toString());
+  }, [autoSaveEnabled]);
   const [currentSummaryRows, setCurrentSummaryRows] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<
     | "calculator"
@@ -12710,6 +12792,7 @@ export default function App() {
     | "employees"
     | "projects"
     | "specification"
+    | "checkout_current"
   >("calculator");
   const [selectedProductCategory, setSelectedProductCategory] = useState<
     string | null
@@ -12776,21 +12859,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "companies"), (snapshot) => {
+    if (!companyData?.id) return;
+    
+    // Only listen to relevant companies (salons of this manufacturer)
+    // or if super admin, listen to all
+    const q = isAppAdmin 
+      ? query(collection(db, "companies"))
+      : query(collection(db, "companies"), where("manufacturerId", "==", companyData.id));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const companies = snapshot.docs.map(
         (doc) => ({ id: doc.id, ...doc.data() }) as any,
       );
       setAllCompanies(companies);
 
-      if (companyData?.id) {
-        const mySalons = companies.filter(
-          (c) => c.manufacturerId === companyData.id,
-        );
-        setSalonsUsingMe(mySalons);
-      }
+      const mySalons = companies.filter(
+        (c) => c.manufacturerId === companyData.id,
+      );
+      setSalonsUsingMe(mySalons);
     });
     return () => unsubscribe();
-  }, [companyData?.id]);
+  }, [companyData?.id, isAppAdmin]);
 
   const updateSalonCoefficient = (
     salonId: string,
@@ -13269,6 +13358,16 @@ export default function App() {
   // Save actions
   const saveProject = async (projectName: string, silent: boolean = false) => {
     if (!companyData?.id || !userData?.uid) return;
+    
+    // Minimum 10 seconds between writes to avoid accidental double-clicks or rapid consecutive saves
+    const now = Date.now();
+    if (now - lastWriteAt.current < 10000 && silent) {
+      console.log("Saving skipped: too frequent");
+      return;
+    }
+    lastWriteAt.current = now;
+
+    setIsSyncing(true);
     try {
       const projectId = currentProjectId || Date.now().toString();
       const projectData: any = {
@@ -13318,8 +13417,25 @@ export default function App() {
         doc(db, "companies", companyData.id, "projects", projectId),
         projectData,
         { merge: true },
-      ).catch((error) => {
+      ).then(() => {
+        const stableTotal = Math.round((currentProjectTotal || 0) * 100);
+        const currentStateHash = JSON.stringify({
+          total: stableTotal,
+          results,
+          selectedDecor,
+          addedProducts,
+          addedServices,
+        });
+        setLastSavedHash(currentStateHash);
+        setLastSyncedAt(new Date());
+        setIsSyncing(false);
+        setQuotaExceeded(false);
+      }).catch((error) => {
         console.error("Ошибка фонового сохранения проекта:", error);
+        setIsSyncing(false);
+        if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
+          setQuotaExceeded(true);
+        }
       });
 
       setCurrentProjectId(projectId);
@@ -13345,7 +13461,17 @@ export default function App() {
     if (!companyData?.id || !userData?.uid) return;
     try {
       const setId = setData.id || `set-${Date.now()}`;
+      const batch = writeBatch(db);
       const setDocRef = doc(db, "companies", companyData.id, "sets", setId);
+
+      // Verify all projects have data before saving
+      for (const p of selectedProjectsForCheckout) {
+        if (!p.data || !p.id) {
+          throw new Error(
+            `Данные проекта ${p.name || p.id} повреждены или отсутствуют`,
+          );
+        }
+      }
 
       const setRecord: FurnitureSet = {
         id: setId,
@@ -13365,11 +13491,11 @@ export default function App() {
         updatedAt: new Date().toISOString(),
       };
 
-      await setDoc(setDocRef, setRecord);
+      batch.set(setDocRef, setRecord);
 
       // Update individual projects status
       for (const pId of setData.projectIds) {
-        await setDoc(
+        batch.set(
           doc(db, "companies", companyData.id, "projects", pId),
           {
             status: "sent",
@@ -13378,6 +13504,8 @@ export default function App() {
           { merge: true },
         );
       }
+
+      await batch.commit();
 
       setIsCheckoutModalOpen(false);
       setPrintSetData({ projects: selectedProjectsForCheckout, data: setData });
@@ -13437,6 +13565,7 @@ export default function App() {
     if (d.serviceData) setServiceData(d.serviceData);
     if (d.furnitureType) setFurnitureType(d.furnitureType);
     if (d.checklistRefused) setChecklistRefused(d.checklistRefused);
+    if (d.summaryRows) setCurrentSummaryRows(d.summaryRows);
 
     setCurrentProjectId(project.id);
     setCurrentProjectName(project.name);
@@ -13594,6 +13723,23 @@ export default function App() {
         `companies/${companyData.id}/settings/production`,
       );
     }
+  };
+
+  const setAddedProductQty = (productId: string | number, newQty: any) => {
+    setAddedProducts((prev) =>
+      prev.map((p) => {
+        if (p.id === productId || p.key === productId) {
+          const qtyVal = newQty === "" ? "" : (parseInt(newQty) || 0);
+          const quantityVal = newQty === "" ? 0 : (parseInt(newQty) || 0);
+          return {
+            ...p,
+            qty: qtyVal,
+            quantity: quantityVal,
+          };
+        }
+        return p;
+      }),
+    );
   };
 
   const updateAddedProductQty = (productId: string | number, delta: number) => {
@@ -13995,6 +14141,18 @@ export default function App() {
 
   useEffect(() => {
     if (results || addedProducts.length > 0 || addedServices.length > 0 || currentProjectName) {
+      // Stabilize total for hashing
+      const stableTotal = Math.round((currentProjectTotal || 0) * 100);
+      
+      const currentStateHash = JSON.stringify({
+        total: stableTotal,
+        // Only hash critical data, and ensure IDs are stable
+        results,
+        selectedDecor,
+        addedProducts,
+        addedServices,
+      });
+
       const draftState = {
         results,
         selectedDecor,
@@ -14025,11 +14183,18 @@ export default function App() {
       };
       localStorage.setItem("mebcalc_draft", JSON.stringify(draftState));
       
+      if (isFirstLoad.current) {
+        setLastSavedHash(currentStateHash);
+        isFirstLoad.current = false;
+        return;
+      }
+
       let timer: NodeJS.Timeout | null = null;
-      if (currentProjectName) {
+      if (currentProjectName && autoSaveEnabled && !quotaExceeded && currentStateHash !== lastSavedHash && !isSyncing) {
+        // Increase debounce to 180 seconds (3 minutes) to significantly save quota
         timer = setTimeout(() => {
           saveProject(currentProjectName, true);
-        }, 12000);
+        }, 180000);
       }
       
       return () => {
@@ -14062,6 +14227,10 @@ export default function App() {
     currentProjectName,
     furnitureType,
     checklistRefused,
+    lastSavedHash,
+    quotaExceeded,
+    autoSaveEnabled,
+    currentProjectTotal
   ]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -15077,7 +15246,10 @@ export default function App() {
           )}
         >
           <div className="flex flex-col h-full">
-            <div className="p-4 flex items-center justify-between min-w-0 flex-shrink-0 border-b border-gray-100">
+            <div className={cn(
+              "flex items-center min-w-0 flex-shrink-0 border-b border-gray-100",
+              isSidebarOpen ? "p-4 justify-between" : "h-14 lg:h-16 justify-center"
+            )}>
               {isSidebarOpen && (
                 <div className="flex flex-col min-w-0">
                   <span className="font-bold text-lg text-blue-600 truncate leading-tight">
@@ -15092,7 +15264,10 @@ export default function App() {
               )}
               <button
                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors ml-auto text-gray-400"
+                className={cn(
+                  "p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-400",
+                  isSidebarOpen ? "ml-auto" : ""
+                )}
               >
                 {isSidebarOpen ? (
                   <X className="w-5 h-5" />
@@ -15106,7 +15281,8 @@ export default function App() {
               <button
                 onClick={() => setActiveTab("projects")}
                 className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all mb-2",
+                  "w-full flex items-center rounded-lg transition-all mb-2",
+                  isSidebarOpen ? "gap-3 px-3 py-2.5" : "justify-center py-2.5",
                   activeTab === "projects"
                     ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                     : "text-gray-600 hover:bg-gray-100",
@@ -15168,7 +15344,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("calculator")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2.5" : "justify-center py-2.5",
                       activeTab === "calculator"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15182,7 +15359,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("summary")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2.5" : "justify-center py-2.5",
                       activeTab === "summary"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15198,7 +15376,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("products")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2.5" : "justify-center py-2.5",
                       activeTab === "products"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15212,7 +15391,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("services")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2.5" : "justify-center py-2.5",
                       activeTab === "services"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15226,7 +15406,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("service-section")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2.5" : "justify-center py-2.5",
                       activeTab === "service-section"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15243,8 +15424,62 @@ export default function App() {
               </div>
             </nav>
 
-            {/* BOTTOM PROFILE & ADMIN SECTION */}
+            {/* BOTTOM CLOUD SYNC & PROFILE SECTION */}
             <div className="px-3 pb-3 pt-2 bg-gray-50/50 space-y-1">
+              {isSidebarOpen && (
+                <div className="mb-2 px-3">
+                   <div className="flex flex-col gap-1.5 p-2 bg-white rounded-lg border border-gray-100 shadow-sm">
+                      <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">
+                            Облако
+                         </span>
+                         {isSyncing ? (
+                           <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
+                         ) : quotaExceeded ? (
+                           <AlertTriangle className="w-3 h-3 text-red-500" />
+                         ) : (
+                           <CheckCircle2 className="w-3 h-3 text-green-500" />
+                         )}
+                      </div>
+                      
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col min-w-0">
+                          <span className={cn(
+                            "text-[10px] font-bold truncate",
+                            quotaExceeded ? "text-red-600" : "text-gray-700"
+                          )}>
+                            {quotaExceeded ? "Квота превышена" : autoSaveEnabled ? "Авто-сохранение" : "Ручной режим"}
+                          </span>
+                          <span className="text-[8px] text-gray-400">
+                             {lastSyncedAt ? `Обновлено: ${lastSyncedAt.toLocaleTimeString()}` : "Нет синхронизации"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                            className={cn(
+                              "p-1 rounded transition-colors",
+                              autoSaveEnabled ? "bg-blue-50 text-blue-600" : "bg-gray-50 text-gray-400"
+                            )}
+                            title={autoSaveEnabled ? "Выключить автосохранение" : "Включить автосохранение"}
+                          >
+                             {autoSaveEnabled ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={() => saveProject(currentProjectName || "Новый проект")}
+                            disabled={isSyncing || !currentProjectName}
+                            className={cn(
+                              "p-1 rounded transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-100 disabled:text-gray-400"
+                            )}
+                            title="Синхронизировать сейчас"
+                          >
+                             <Save className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                   </div>
+                </div>
+              )}
               {isSidebarOpen && (
                 <div className="mb-2">
                   <div className="flex flex-col px-3 gap-0.5">
@@ -15257,7 +15492,11 @@ export default function App() {
                         "Пользователь"}
                     </span>
                     <span className="text-[9px] text-gray-500 font-medium truncate uppercase tracking-tighter">
-                      {userRole === "admin" ? "Администратор" : "Сотрудник"}{" "}
+                      {userRole === "admin"
+                        ? "Администратор"
+                        : userRole === "supervisor"
+                          ? "Руководитель"
+                          : "Сотрудник"}{" "}
                       {companyData?.type === "Салон"
                         ? "салона"
                         : companyData?.type === "Дизайнер"
@@ -15272,7 +15511,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("price")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2" : "justify-center py-2",
                       activeTab === "price"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15288,7 +15528,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("settings")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2" : "justify-center py-2",
                       activeTab === "settings"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15302,7 +15543,8 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab("production")}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                      "w-full flex items-center rounded-lg transition-all",
+                      isSidebarOpen ? "gap-3 px-3 py-2" : "justify-center py-2",
                       activeTab === "production"
                         ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                         : "text-gray-600 hover:bg-gray-100",
@@ -15321,7 +15563,8 @@ export default function App() {
                 <button
                   onClick={() => setActiveTab("employees")}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all",
+                    "w-full flex items-center rounded-lg transition-all",
+                    isSidebarOpen ? "gap-3 px-3 py-2" : "justify-center py-2",
                     activeTab === "employees"
                       ? "bg-blue-600 text-white shadow-md shadow-blue-200"
                       : "text-gray-600 hover:bg-gray-100",
@@ -15336,7 +15579,10 @@ export default function App() {
               {isAppAdmin && (
                 <button
                   onClick={() => setShowAdminPanel(true)}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-blue-600 hover:bg-blue-50 transition-all border border-blue-100"
+                  className={cn(
+                    "w-full flex items-center rounded-lg text-blue-600 hover:bg-blue-50 transition-all border border-blue-100",
+                    isSidebarOpen ? "gap-3 px-3 py-2" : "justify-center py-2"
+                  )}
                 >
                   <ShieldCheck className="w-[18px] h-[18px] flex-shrink-0" />
                   {isSidebarOpen && (
@@ -15346,7 +15592,10 @@ export default function App() {
               )}
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-red-600 hover:bg-red-50 transition-all"
+                className={cn(
+                  "w-full flex items-center rounded-lg text-red-600 hover:bg-red-50 transition-all",
+                  isSidebarOpen ? "gap-3 px-3 py-2" : "justify-center py-2"
+                )}
               >
                 <LogOut className="w-[18px] h-[18px] flex-shrink-0" />
                 {isSidebarOpen && (
@@ -15421,73 +15670,125 @@ export default function App() {
               selectedForGlue={selectedForGlue}
               setSelectedForGlue={setSelectedForGlue}
             />
-          ) : activeTab === "summary" ? (
-            <SummaryView
-              onSummaryCalculated={(t, r) => {
-                setCurrentProjectTotal(t);
-                if (r) setCurrentSummaryRows(r);
-              }}
-              results={results}
-              selectedDecor={selectedDecor}
-              prices={prices}
-              facadeType={facadeType}
-              sheetConfigs={sheetConfigs}
-              trimming={trimming}
-              kerf={kerf}
-              rotations={rotations}
-              cuttingType={cuttingType}
-              calcMode={calcMode}
-              coefficients={currentCoefficients}
-              edgeToEdge={edgeToEdge}
-              edgePrices={edgePrices}
-              setEdgePrices={setEdgePrices}
-              edgeThickness={edgeThickness}
-              edgeDecor={edgeDecor}
-              facadeCustomType={facadeCustomType}
-              facadeCategory={facadeCategory}
-              facadeMilling={facadeMilling}
-              facadeThicknessOverride={facadeThicknessOverride}
-              hardwareKitPrice={currentHardwareKitPrice}
-              addedProducts={addedProducts}
-              addedServices={addedServices}
-              serviceData={serviceData}
-              assemblyPercentage={assemblyPercentage}
-              deliveryTariffs={deliveryTariffs}
-              canEditCabinet={canEditCabinet}
-              canEditFacades={canEditFacades}
-              canEditHardware={canEditHardware}
-              canEditAssembly={canEditAssembly}
-              canEditDelivery={canEditDelivery}
-              customerType={customerType}
-              setCustomerType={setCustomerType}
-              selectedSalonId={selectedSalonId}
-              setSelectedSalonId={setSelectedSalonId}
-              salonsUsingMe={salonsUsingMe}
-              isProduction={companyData?.type === "Мебельное производство"}
-              ownProductionConfig={ownProductionConfig}
-              productionFormat={productionFormat}
-              productionSettings={productionSettings}
-              userRole={userRole}
-              companyType={companyData?.type}
-              setPrices={setPrices}
-              mergedMaterials={mergedMaterials}
-              selectedForGlue={selectedForGlue}
-              furnitureType={furnitureType}
-              setFurnitureType={setFurnitureType}
-              checklistRefused={checklistRefused}
-              setChecklistRefused={setChecklistRefused}
-              worktopCuts={worktopCuts}
-              setWorktopCuts={setWorktopCuts}
-              gluedEdgeDecor={gluedEdgeDecor}
-              setGluedEdgeDecor={setGluedEdgeDecor}
-              updateAddedProductQty={updateAddedProductQty}
-              removeAddedProduct={removeAddedProduct}
-              setActiveTab={setActiveTab}
-              showAlert={showAlert}
-              showConfirm={showConfirm}
-              catalogMaterials={catalogMaterials}
-              resolveBrandCoefficient={resolveBrandCoefficient}
-            />
+          ) : activeTab === "summary" || activeTab === "checkout_current" ? (
+            <>
+              <SummaryView
+                onSummaryCalculated={(t, r) => {
+                  setCurrentProjectTotal(t);
+                  if (r) setCurrentSummaryRows(r);
+                }}
+                results={results}
+                selectedDecor={selectedDecor}
+                prices={prices}
+                facadeType={facadeType}
+                sheetConfigs={sheetConfigs}
+                trimming={trimming}
+                kerf={kerf}
+                rotations={rotations}
+                cuttingType={cuttingType}
+                calcMode={calcMode}
+                coefficients={currentCoefficients}
+                edgeToEdge={edgeToEdge}
+                edgePrices={edgePrices}
+                setEdgePrices={setEdgePrices}
+                edgeThickness={edgeThickness}
+                edgeDecor={edgeDecor}
+                facadeCustomType={facadeCustomType}
+                facadeCategory={facadeCategory}
+                facadeMilling={facadeMilling}
+                facadeThicknessOverride={facadeThicknessOverride}
+                hardwareKitPrice={currentHardwareKitPrice}
+                addedProducts={addedProducts}
+                addedServices={addedServices}
+                serviceData={serviceData}
+                assemblyPercentage={assemblyPercentage}
+                deliveryTariffs={deliveryTariffs}
+                canEditCabinet={canEditCabinet}
+                canEditFacades={canEditFacades}
+                canEditHardware={canEditHardware}
+                canEditAssembly={canEditAssembly}
+                canEditDelivery={canEditDelivery}
+                customerType={customerType}
+                setCustomerType={setCustomerType}
+                selectedSalonId={selectedSalonId}
+                setSelectedSalonId={setSelectedSalonId}
+                salonsUsingMe={salonsUsingMe}
+                isProduction={companyData?.type === "Мебельное производство"}
+                ownProductionConfig={ownProductionConfig}
+                productionFormat={productionFormat}
+                productionSettings={productionSettings}
+                userRole={userRole}
+                companyType={companyData?.type}
+                setPrices={setPrices}
+                mergedMaterials={mergedMaterials}
+                selectedForGlue={selectedForGlue}
+                furnitureType={furnitureType}
+                setFurnitureType={setFurnitureType}
+                checklistRefused={checklistRefused}
+                setChecklistRefused={setChecklistRefused}
+                worktopCuts={worktopCuts}
+                setWorktopCuts={setWorktopCuts}
+                gluedEdgeDecor={gluedEdgeDecor}
+                setGluedEdgeDecor={setGluedEdgeDecor}
+                updateAddedProductQty={updateAddedProductQty}
+                setAddedProductQty={setAddedProductQty}
+                removeAddedProduct={removeAddedProduct}
+                setActiveTab={setActiveTab}
+                showAlert={showAlert}
+                showConfirm={showConfirm}
+                catalogMaterials={catalogMaterials}
+                resolveBrandCoefficient={resolveBrandCoefficient}
+              />
+              {activeTab === "checkout_current" && (
+                <ProjectSetCheckoutModal
+                  projects={[
+                    {
+                      id: currentProjectId || "temp",
+                      name: currentProjectName || "Новый проект",
+                      createdAt: new Date().toISOString(),
+                      data: {
+                        summaryRows: currentSummaryRows,
+                        results,
+                        selectedDecor,
+                        prices,
+                        facadeType,
+                        sheetConfigs,
+                        trimming,
+                        kerf,
+                        rotations,
+                        cuttingType,
+                        calcMode,
+                        edgeToEdge,
+                        edgePrices,
+                        edgeThickness,
+                        edgeDecor,
+                        addedProducts,
+                        addedServices,
+                        serviceData,
+                        worktopCuts,
+                        gluedEdgeDecor,
+                        furnitureType,
+                        checklistRefused,
+                        facadeCustomType,
+                        facadeCategory,
+                        facadeMilling,
+                        facadeThicknessOverride,
+                      },
+                      totalPrice: currentProjectTotal,
+                    },
+                  ]}
+                  onClose={() => setActiveTab("summary")}
+                  onSave={async (setData) => {
+                    // First save the project to get a proper ID
+                    const projId = currentProjectId || Date.now().toString();
+                    await saveProject(currentProjectName || "Новый проект", true);
+                    // Then finalize checkout
+                    await finalizeSet({ ...setData, projectIds: [projId] });
+                  }}
+                  productionCycle={ownProductionConfig.productionCycle || "working"}
+                />
+              )}
+            </>
           ) : activeTab === "projects" ? (
             <ProjectsView
               companyId={companyData?.id}

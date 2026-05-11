@@ -53,6 +53,23 @@ export const ProjectSpecificationView = ({
     setSelectedSketch(null);
   };
 
+  const handleTransferToSupervisor = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await updateDoc(doc(db, 'companies', companyId, 'projects', project.id), {
+        status: 'transferred',
+        transferredAt: serverTimestamp()
+      });
+      onClose();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `companies/${companyId}/projects/${project.id}`);
+      setError('Ошибка при передаче руководителю');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSendProject = () => {
     setIsSubmitting(true);
     setError(null);
@@ -226,13 +243,22 @@ export const ProjectSpecificationView = ({
               >
                 Сохранить PDF
               </button>
-              <button 
+               <button 
                 onClick={handleSendProject}
                 disabled={isSubmitting}
                 className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700"
               >
-                Передать
+                Оформить проект
               </button>
+              {project.status === 'sent' && (
+                <button 
+                  onClick={handleTransferToSupervisor}
+                  disabled={isSubmitting}
+                  className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700"
+                >
+                  Передать руководителю
+                </button>
+              )}
             </div>
             <div className="text-sm text-gray-500">
               Статус: <span className={cn(

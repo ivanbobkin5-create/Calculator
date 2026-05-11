@@ -56,6 +56,23 @@ export const ProjectSpecificationModal = ({
     setSketches(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handleTransferToSupervisor = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await updateDoc(doc(db, 'companies', companyId, 'projects', project.id), {
+        status: 'transferred',
+        transferredAt: serverTimestamp()
+      });
+      onClose();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `companies/${companyId}/projects/${project.id}`);
+      setError('Ошибка при передаче руководителю');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSendProject = async () => {
     setIsSubmitting(true);
     setError(null);
@@ -213,6 +230,17 @@ export const ProjectSpecificationModal = ({
               Закрыть
             </button>
             
+            {project.status === 'sent' && (
+              <button 
+                onClick={handleTransferToSupervisor}
+                disabled={isSubmitting}
+                className="flex-1 sm:flex-none px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                Передать руководителю
+              </button>
+            )}
+
             {userRole === 'manager' && project.status === 'draft' && (
               <button 
                 onClick={handleSendProject}
@@ -220,7 +248,7 @@ export const ProjectSpecificationModal = ({
                 className="flex-1 sm:flex-none px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2"
               >
                 {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-                Отправить проект
+                Оформить проект
               </button>
             )}
 

@@ -170,6 +170,7 @@ export const ProjectSetCheckoutModal = ({
     const services: any[] = [];
 
     projects.forEach((p) => {
+      if (!p.data) return;
       const rows = p.data.summaryRows;
       if (rows && rows.length > 0) {
         rows.forEach((row: any) => {

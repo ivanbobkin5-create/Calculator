@@ -12,6 +12,7 @@ import {
   ClipboardList,
   Combine,
   CheckCircle2,
+  Send,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { db, handleFirestoreError, OperationType } from "../../firebase";
@@ -24,6 +25,9 @@ import {
   deleteDoc,
   updateDoc,
   doc,
+  or,
+  writeBatch,
+  limit,
 } from "firebase/firestore";
 import { ProjectSpecificationModal } from "./ProjectSpecificationModal";
 
@@ -78,6 +82,81 @@ export const ProjectsView = ({
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
 
+  const handleTransfer = async (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    if (!companyId) return;
+
+    showConfirm(
+      "Передача проекта",
+      `Вы действительно хотите передать проект "${project.name}" руководителю? После передачи он появится во вкладке "Переданные".`,
+      async () => {
+        try {
+          await updateDoc(
+            doc(db, "companies", companyId, "projects", project.id),
+            {
+              status: "transferred",
+              transferredAt: new Date().toISOString(),
+            },
+          );
+          
+          // Also transfer the set if it exists
+          if (project.data?.setId) {
+             await updateDoc(
+              doc(db, "companies", companyId, "sets", project.data.setId),
+              {
+                status: "transferred",
+                transferredAt: new Date().toISOString(),
+              },
+            );
+          }
+        } catch (error) {
+          handleFirestoreError(
+            error,
+            OperationType.UPDATE,
+            `companies/${companyId}/projects/${project.id}`,
+          );
+        }
+      },
+    );
+  };
+
+  const handleTransferSet = async (e: React.MouseEvent, set: any) => {
+    e.stopPropagation();
+    if (!companyId) return;
+
+    showConfirm(
+      "Передача комплекта",
+      `Вы действительно хотите передать комплект "${set.name}" руководителю?`,
+      async () => {
+        try {
+          const batch = writeBatch(db);
+          
+          batch.update(doc(db, "companies", companyId, "sets", set.id), {
+            status: "transferred",
+            transferredAt: new Date().toISOString(),
+          });
+          
+          // Also transfer all projects in the set
+          if (set.projectIds && set.projectIds.length > 0) {
+            for (const pId of set.projectIds) {
+              batch.update(doc(db, "companies", companyId, "projects", pId), {
+                status: "transferred",
+                transferredAt: new Date().toISOString(),
+              });
+            }
+          }
+          
+          await batch.commit();
+        } catch (error) {
+          handleFirestoreError(
+            error,
+            OperationType.UPDATE,
+            `companies/${companyId}/sets/${set.id}`,
+          );
+        }
+      },
+    );
+  };
   const handleRenameSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!editingProjectId || !companyId || !editingName.trim()) {
@@ -113,10 +192,26 @@ export const ProjectsView = ({
       qProjects = query(
         collection(db, "companies", companyId, "projects"),
         orderBy("createdAt", "desc"),
+        limit(40),
       );
       qSets = query(
         collection(db, "companies", companyId, "sets"),
         orderBy("createdAt", "desc"),
+        limit(40),
+      );
+    } else if (userRole === "supervisor") {
+      // Supervisor sees their own projects AND any transferred projects
+      qProjects = query(
+        collection(db, "companies", companyId, "projects"),
+        or(where("createdBy", "==", userId), where("status", "==", "transferred")),
+        orderBy("createdAt", "desc"),
+        limit(40),
+      );
+      qSets = query(
+        collection(db, "companies", companyId, "sets"),
+        or(where("createdBy", "==", userId), where("status", "==", "transferred")),
+        orderBy("createdAt", "desc"),
+        limit(40),
       );
     } else {
       // Employees see only their own projects
@@ -124,11 +219,13 @@ export const ProjectsView = ({
         collection(db, "companies", companyId, "projects"),
         where("createdBy", "==", userId),
         orderBy("createdAt", "desc"),
+        limit(40),
       );
       qSets = query(
         collection(db, "companies", companyId, "sets"),
         where("createdBy", "==", userId),
         orderBy("createdAt", "desc"),
+        limit(40),
       );
     }
 
@@ -335,67 +432,7 @@ export const ProjectsView = ({
                   className="group bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-indigo-200 transition-all relative overflow-hidden"
                 >
                   <div className="absolute top-4 right-4 flex items-center gap-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        // This will trigger 'add to set' flow
-                        if (!companyId) return;
-
-                        // Select projects from the set and switch to selection mode
-                        const newSelection = new Set<string>(
-                          set.projectIds || [],
-                        );
-                        setSelectedProjectIds(newSelection);
-                        setIsSelectionMode(true);
-                        setActiveFilter("all");
-                      }}
-                      title="Выбрать комплекты и дособрать..."
-                      className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                    >
-                      <Plus className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        // Open specification immediately
-                        const setProjects = projects.filter((p) =>
-                          (set.projectIds || []).includes(p.id),
-                        );
-                        if (onCreateSet && setProjects.length > 0) {
-                          onCreateSet(setProjects, set);
-                        }
-                      }}
-                      title="Открыть спецификацию"
-                      className="p-2 text-green-600 hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                    >
-                      <FileText className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (!companyId) return;
-                        showConfirm(
-                          "Удаление комплекта",
-                          "Вы уверены, что хотите удалить комплект?",
-                          async () => {
-                            try {
-                              await deleteDoc(
-                                doc(db, "companies", companyId, "sets", set.id),
-                              );
-                            } catch (error) {
-                              handleFirestoreError(
-                                error,
-                                OperationType.DELETE,
-                                `companies/${companyId}/sets/${set.id}`,
-                              );
-                            }
-                          },
-                        );
-                      }}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
+                    {/* Only selection icons if any */}
                   </div>
 
                   <div className="flex items-start gap-4 mb-4">
@@ -415,6 +452,60 @@ export const ProjectsView = ({
                         Сумма: {(set.totalPrice || 0).toLocaleString()} ₽
                       </div>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-50">
+                    {set.status !== "transferred" && (
+                      <button
+                        onClick={(e) => handleTransferSet(e, set)}
+                        title="Передать руководителю"
+                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Send className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!companyId) return;
+                        const newSelection = new Set<string>(set.projectIds || []);
+                        setSelectedProjectIds(newSelection);
+                        setIsSelectionMode(true);
+                        setActiveFilter("all");
+                      }}
+                      title="Дособрать комплект"
+                      className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const setProjects = projects.filter((p) => (set.projectIds || []).includes(p.id));
+                        if (onCreateSet && setProjects.length > 0) onCreateSet(setProjects, set);
+                      }}
+                      className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Спецификация
+                    </button>
+                    <div className="flex-1" />
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!companyId) return;
+                        showConfirm("Удаление", "Удалить комплект?", async () => {
+                          try {
+                            await deleteDoc(doc(db, "companies", companyId, "sets", set.id));
+                          } catch (error) {
+                            handleFirestoreError(error, OperationType.DELETE, `companies/${companyId}/sets/${set.id}`);
+                          }
+                        });
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -449,27 +540,21 @@ export const ProjectsView = ({
                     : "border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200",
                 )}
               >
-                <div className="absolute top-4 right-4 flex items-center gap-2">
-                  <button
-                    onClick={(e) => toggleProjectSelection(e, project.id)}
-                    className={cn(
-                      "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
-                      selectedProjectIds.has(project.id)
-                        ? "bg-indigo-600 border-indigo-600 text-white"
-                        : "bg-white border-gray-200 text-transparent hover:border-indigo-400 opacity-0 group-hover:opacity-100",
-                    )}
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={(e) => handleDelete(e, project.id)}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
+                  <div className="absolute top-4 right-4 flex items-center gap-2">
+                    <button
+                      onClick={(e) => toggleProjectSelection(e, project.id)}
+                      className={cn(
+                        "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
+                        selectedProjectIds.has(project.id)
+                          ? "bg-indigo-600 border-indigo-600 text-white"
+                          : "bg-white border-gray-200 text-transparent hover:border-indigo-400 opacity-0 group-hover:opacity-100",
+                      )}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                  </div>
 
-                <div className="flex items-start gap-4 mb-4">
+                  <div className="flex items-start gap-4 mb-4">
                   <div
                     className={cn(
                       "w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all",
@@ -536,34 +621,56 @@ export const ProjectsView = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500">
+                <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-auto gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 bg-gray-100 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-gray-500">
                       {project.createdByName?.charAt(0) || "U"}
                     </div>
-                    <span className="text-xs text-gray-500 font-medium truncate max-w-[120px]">
+                    <span className="text-[10px] text-gray-500 font-medium truncate">
                       {project.createdByName || "Пользователь"}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {project.status === "sent" && (
+                      <button
+                        onClick={(e) => handleTransfer(e, project)}
+                        title="Передать руководителю"
+                        className="p-1 px-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     {(userRole === "manager" || userRole === "admin") && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenSpecification(project);
                         }}
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-all flex items-center gap-1 text-[10px] font-bold"
+                        className="p-1 px-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold"
                       >
-                        <ClipboardList className="w-4 h-4" />
+                        <ClipboardList className="w-3.5 h-3.5" />
                         {project.status === "sent" ||
                         project.status === "transferred"
                           ? "Спецификация"
                           : "Оформить"}
                       </button>
                     )}
-                    <div className="flex items-center gap-1 text-blue-600 text-xs font-bold group-hover:translate-x-1 transition-transform">
-                      Открыть <ArrowRight className="w-3 h-3" />
-                    </div>
+                    <button
+                      onClick={(e) => handleDelete(e, project.id)}
+                      className="p-1 px-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Normal open behavior (usually click on card handles it, but explicit button is good)
+                        onOpenSpecification(project);
+                      }}
+                      className="flex items-center gap-1 px-2 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold hover:bg-blue-100 transition-all group/open ml-1"
+                    >
+                      Открыть <ArrowRight className="w-3 h-3 group-hover/open:translate-x-0.5 transition-transform" />
+                    </button>
                   </div>
                 </div>
               </div>

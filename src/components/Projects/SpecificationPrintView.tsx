@@ -167,6 +167,12 @@ export const SpecificationPrintView = ({
                       0,
                     );
                   }
+                  if (projSum === 0 && p.data?.results) {
+                    projSum = Object.values(p.data.results).reduce(
+                      (acc: number, r: any) => acc + (r.totalPrice || 0),
+                      0,
+                    );
+                  }
                   const projReadyDate =
                     setData.useSeparateDates && setData.perProjectDates?.[p.id]
                       ? new Date(
@@ -241,64 +247,90 @@ export const SpecificationPrintView = ({
                 </div>
                 <div className="border border-gray-200 rounded-b-xl px-4 py-3 bg-white text-[10px] space-y-3">
                   {projects.map((p: any, idx: number) => {
-                    if (!p.data?.summaryRows) return null;
-                    const items = p.data.summaryRows;
                     const mList: any[] = [];
+                    
+                    if (p.data?.summaryRows) {
+                      const items = p.data.summaryRows;
+                      const materials = items.filter(
+                        (r: any) => r.type === "material",
+                      );
+                      const edges = items.filter((r: any) => r.type === "edge");
+                      const pEdges = items.filter(
+                        (r: any) => r.type === "product_edge",
+                      );
 
-                    const materials = items.filter(
-                      (r: any) => r.type === "material",
-                    );
-                    const edges = items.filter((r: any) => r.type === "edge");
-                    const pEdges = items.filter(
-                      (r: any) => r.type === "product_edge",
-                    );
+                      materials.forEach((m: any) => {
+                        if (m.name === "Комплект метизов") return;
+                        let kind = "ЛДСП/МДФ (Корпус)";
+                        if (m.name?.includes("Фасад")) {
+                          kind =
+                            "Фасады (" +
+                            m.name.replace("Фасад ", "").replace(/[()]/g, "") +
+                            ")";
+                        } else if (
+                          m.name?.toLowerCase().includes("хдф") ||
+                          m.sub?.toLowerCase().includes("хдф")
+                        ) {
+                          kind = "ХДФ (Задняя стенка)";
+                        } else if (m.name?.toLowerCase().includes("столешница")) {
+                          kind = "Столешница/Панель";
+                        }
 
-                    materials.forEach((m: any) => {
-                      if (m.name === "Комплект метизов") return;
-                      let kind = "ЛДСП/МДФ (Корпус)";
-                      if (m.name?.includes("Фасад")) {
-                        kind =
-                          "Фасады (" +
-                          m.name.replace("Фасад ", "").replace(/[()]/g, "") +
-                          ")";
-                      } else if (
-                        m.name?.toLowerCase().includes("хдф") ||
-                        m.sub?.toLowerCase().includes("хдф")
-                      ) {
-                        kind = "ХДФ (Задняя стенка)";
-                      } else if (m.name?.toLowerCase().includes("столешница")) {
-                        kind = "Столешница/Панель";
+                        const decorValue =
+                          m.decor && m.decor !== "-" ? m.decor : m.sub || "";
+                        mList.push({ kind, value: decorValue });
+                      });
+
+                      if (edges.length > 0) {
+                        const edgeValues = Array.from(
+                          new Set(
+                            edges.map((e: any) =>
+                              e.decor && e.decor !== "-" ? e.decor : e.name,
+                            ),
+                          ),
+                        ).join(", ");
+                        mList.push({ kind: "Кромка", value: edgeValues });
                       }
 
-                      const decorValue =
-                        m.decor && m.decor !== "-" ? m.decor : m.sub || "";
-                      mList.push({ kind, value: decorValue });
+                      if (pEdges.length > 0) {
+                        const pEdgeValues = Array.from(
+                          new Set(
+                            pEdges.map((e: any) =>
+                              e.decor && e.decor !== "-" ? e.decor : e.name,
+                            ),
+                          ),
+                        ).join(", ");
+                        mList.push({
+                          kind: "Кромка (Столешница/Панель)",
+                          value: pEdgeValues,
+                        });
+                      }
+                    } else if (p.data) {
+                      // Fallback if summaryRows are missing
+                      if (p.data.selectedDecor) {
+                        mList.push({ kind: "ЛДСП/МДФ (Корпус)", value: p.data.selectedDecor });
+                      }
+                      if (p.data.edgeDecor) {
+                        mList.push({ kind: "Кромка", value: p.data.edgeDecor });
+                      }
+                      if (p.data.facadeType) {
+                        mList.push({ kind: "Фасады", value: p.data.facadeType });
+                      }
+                    }
+
+                    // Sort materials: LDSP, HDF, Facades, Worktop, Edge
+                    mList.sort((a, b) => {
+                      const getWeight = (k: string) => {
+                        const lower = k.toLowerCase();
+                        if (lower.includes("лдсп") || lower.includes("мдф")) return 10;
+                        if (lower.includes("хдф")) return 20;
+                        if (lower.includes("фасад")) return 30;
+                        if (lower.includes("столешниц")) return 40;
+                        if (lower.includes("кромка")) return 50;
+                        return 100;
+                      };
+                      return getWeight(a.kind) - getWeight(b.kind);
                     });
-
-                    if (edges.length > 0) {
-                      const edgeValues = Array.from(
-                        new Set(
-                          edges.map((e: any) =>
-                            e.decor && e.decor !== "-" ? e.decor : e.name,
-                          ),
-                        ),
-                      ).join(", ");
-                      mList.push({ kind: "Кромка", value: edgeValues });
-                    }
-
-                    if (pEdges.length > 0) {
-                      const pEdgeValues = Array.from(
-                        new Set(
-                          pEdges.map((e: any) =>
-                            e.decor && e.decor !== "-" ? e.decor : e.name,
-                          ),
-                        ),
-                      ).join(", ");
-                      mList.push({
-                        kind: "Кромка (Столешница/Панель)",
-                        value: pEdgeValues,
-                      });
-                    }
 
                     if (mList.length === 0) return null;
 

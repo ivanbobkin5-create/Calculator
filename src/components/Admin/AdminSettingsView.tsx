@@ -17,7 +17,7 @@ interface Employee {
   name: string;
   email: string;
   role: string;
-  accessLevel: 'admin' | 'manager' | 'worker';
+  accessLevel: 'admin' | 'supervisor' | 'manager' | 'worker';
   createdAt?: string;
 }
 
@@ -428,6 +428,7 @@ export const AdminSettingsView = ({
                     className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 sm:text-sm appearance-none bg-white"
                   >
                     <option value="admin">Администратор (Полный доступ)</option>
+                    <option value="supervisor">Руководитель (Просмотр переданных)</option>
                     <option value="manager">Менеджер (Создание заказов)</option>
                     <option value="worker">Сотрудник (Только просмотр)</option>
                   </select>
@@ -495,10 +496,12 @@ export const AdminSettingsView = ({
                     <span className={cn(
                       "px-2 inline-flex text-xs leading-5 font-semibold rounded-full",
                       employee.accessLevel === 'admin' ? "bg-purple-100 text-purple-800" :
+                      employee.accessLevel === 'supervisor' ? "bg-orange-100 text-orange-800" :
                       employee.accessLevel === 'manager' ? "bg-blue-100 text-blue-800" :
                       "bg-green-100 text-green-800"
                     )}>
                       {employee.accessLevel === 'admin' ? 'Администратор' :
+                       employee.accessLevel === 'supervisor' ? 'Руководитель' :
                        employee.accessLevel === 'manager' ? 'Менеджер' : 'Сотрудник'}
                     </span>
                   </td>
